@@ -1112,6 +1112,46 @@
         }
       }
 
+      // Media Stream Acquisition with Concurrent Access Fallback
+      async acquireMediaStream(type) {
+        const audioConstraints = {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        };
+
+        if (type === 'voice') {
+          return await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
+        }
+
+        try {
+          return await navigator.mediaDevices.getUserMedia({
+            audio: audioConstraints,
+            video: {
+              facingMode: this.currentFacingMode,
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            }
+          });
+        } catch (err) {
+          console.warn('[Media] HD video request failed, trying basic video:', err);
+          try {
+            return await navigator.mediaDevices.getUserMedia({
+              audio: audioConstraints,
+              video: true
+            });
+          } catch (err2) {
+            console.warn('[Media] Video completely unavailable, falling back to voice:', err2);
+            showToast('Camera in use or unavailable: joined with voice', 'warning');
+            this.callType = 'voice';
+            return await navigator.mediaDevices.getUserMedia({
+              audio: audioConstraints,
+              video: false
+            });
+          }
+        }
+      }
+
       // ==========================================
       // WEBRTC PEER CONNECTION CREATION
       // ==========================================
@@ -1121,32 +1161,42 @@
           this.pc = null;
         }
 
-        this.iceCandidateQueue = [];
         this.pc = new RTCPeerConnection(RTC_CONFIG);
 
-        // Send local ICE candidates to remote target via Socket.io
+        // Send local ICE candidates to remote target via Socket.io as plain objects
         this.pc.onicecandidate = (event) => {
           if (event.candidate && this.targetPeerId) {
             this.socket.emit('ice-candidate', {
               targetId: this.targetPeerId,
-              candidate: event.candidate
+              candidate: {
+                candidate: event.candidate.candidate,
+                sdpMid: event.candidate.sdpMid,
+                sdpMLineIndex: event.candidate.sdpMLineIndex,
+                usernameFragment: event.candidate.usernameFragment
+              }
             });
           }
         };
 
-        // Attach remote tracks when received
+        // Attach remote tracks when received (stream or track fallback)
         this.pc.ontrack = (event) => {
+          console.log('[WebRTC] Remote track received:', event.track.kind);
           if (event.streams && event.streams[0]) {
             this.remoteStream = event.streams[0];
-            this.remoteVideo.srcObject = this.remoteStream;
-            if (this.remoteAudio) this.remoteAudio.srcObject = this.remoteStream;
-
-            const hasVideo = this.remoteStream.getVideoTracks().length > 0 && this.remoteStream.getVideoTracks()[0].enabled;
-            if (!hasVideo || this.callType === 'voice') {
-              this.remoteAudioFallback.classList.remove('hidden');
-            } else {
-              this.remoteAudioFallback.classList.add('hidden');
+          } else {
+            if (!this.remoteStream) {
+              this.remoteStream = new MediaStream();
             }
+            this.remoteStream.addTrack(event.track);
+          }
+          this.remoteVideo.srcObject = this.remoteStream;
+          if (this.remoteAudio) this.remoteAudio.srcObject = this.remoteStream;
+
+          const hasVideo = this.remoteStream.getVideoTracks().length > 0 && this.remoteStream.getVideoTracks()[0].enabled;
+          if (!hasVideo || this.callType === 'voice') {
+            this.remoteAudioFallback.classList.remove('hidden');
+          } else {
+            this.remoteAudioFallback.classList.add('hidden');
           }
         };
 
@@ -1164,7 +1214,7 @@
       }
 
       async addRemoteCandidate(candidate) {
-        if (!candidate) return;
+        if (!candidate || !candidate.candidate) return;
         if (this.pc && this.pc.remoteDescription && this.pc.remoteDescription.type) {
           try {
             await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
@@ -1177,6 +1227,7 @@
       }
 
       async flushIceCandidateQueue() {
+        console.log(`[WebRTC] Flushing ${this.iceCandidateQueue.length} queued ICE candidates`);
         while (this.iceCandidateQueue.length > 0) {
           const c = this.iceCandidateQueue.shift();
           try {
@@ -1338,6 +1389,7 @@
           return;
         }
 
+        this.iceCandidateQueue = [];
         this.callType = type;
         this.targetPeerId = cleanDigits;
 
@@ -1345,20 +1397,7 @@
         this.stopIdleCameraPreview();
 
         try {
-          const mediaConstraints = {
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true
-            },
-            video: type === 'video' ? {
-              facingMode: this.currentFacingMode,
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
-            } : false
-          };
-
-          this.localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+          this.localStream = await this.acquireMediaStream(type);
           this.isMicMuted = false;
           this.isCameraOff = (type === 'voice');
 
@@ -1387,12 +1426,15 @@
           });
           await pc.setLocalDescription(offer);
 
-          // Emit call offer to server
+          // Emit call offer to server as plain serializable object
           this.socket.emit('call-user', {
             targetId: this.targetPeerId,
             callerId: this.my15DigitId,
             callType: type,
-            offer: offer
+            offer: {
+              type: pc.localDescription.type,
+              sdp: pc.localDescription.sdp
+            }
           });
 
           // 45-second timeout for unanswered calls
@@ -1444,20 +1486,7 @@
         if (!this.targetPeerId || !this.incomingOffer) return;
 
         try {
-          const mediaConstraints = {
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true
-            },
-            video: this.callType === 'video' ? {
-              facingMode: this.currentFacingMode,
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
-            } : false
-          };
-
-          this.localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+          this.localStream = await this.acquireMediaStream(this.callType);
           this.isMicMuted = false;
           this.isCameraOff = (this.callType === 'voice');
 
@@ -1470,18 +1499,25 @@
           });
 
           // Set Remote Description (Caller's Offer)
-          await pc.setRemoteDescription(new RTCSessionDescription(this.incomingOffer));
+          const remoteOfferDesc = new RTCSessionDescription({
+            type: this.incomingOffer.type || 'offer',
+            sdp: this.incomingOffer.sdp
+          });
+          await pc.setRemoteDescription(remoteOfferDesc);
           await this.flushIceCandidateQueue();
 
           // Create and set Local Description (Answer)
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
 
-          // Emit answer back to caller
+          // Emit answer back to caller as plain serializable object
           this.socket.emit('answer-call', {
             targetId: this.targetPeerId,
             responderId: this.my15DigitId,
-            answer: answer
+            answer: {
+              type: pc.localDescription.type,
+              sdp: pc.localDescription.sdp
+            }
           });
 
           // Transition to In-Call state
@@ -1506,14 +1542,22 @@
       // CALL LIFECYCLE: 3. IN-CALL STATE
       // ==========================================
       async handleCallAnswered(responderId, answer) {
-        if (!this.pc) return;
-        try {
-          await this.pc.setRemoteDescription(new RTCSessionDescription(answer));
-          await this.flushIceCandidateQueue();
-          this.handleCallConnected(responderId);
-        } catch (e) {
-          console.error('[WebRTC] Set remote answer error:', e);
+        console.log('[Call] Remote answered call from:', responderId);
+        soundSynth.stopRingback(); // STOP RINGING IMMEDIATELY ON ANSWER!
+
+        if (this.pc && answer && answer.sdp) {
+          try {
+            const desc = new RTCSessionDescription({
+              type: answer.type || 'answer',
+              sdp: answer.sdp
+            });
+            await this.pc.setRemoteDescription(desc);
+            await this.flushIceCandidateQueue();
+          } catch (e) {
+            console.warn('[WebRTC] Set remote answer warning:', e);
+          }
         }
+        this.handleCallConnected(responderId);
       }
 
       handleCallConnected(remoteId) {

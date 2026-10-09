@@ -71,11 +71,10 @@ const io = new Server(server, {
   }
 });
 
-// Ephemeral in-memory mapping: deviceId <-> socketId
-const deviceToSocket = new Map();
+// Ephemeral in-memory mapping: socketId <-> deviceId
 const socketToDevice = new Map();
-// Active call mapping to handle abrupt disconnections
-const activeCalls = new Map(); // socketId -> peerSocketId
+// Active calls tracking: deviceId -> peerDeviceId
+const activeCalls = new Map();
 
 io.on('connection', (socket) => {
   console.log(`[Socket] Connected: ${socket.id}`);
@@ -85,21 +84,24 @@ io.on('connection', (socket) => {
     if (!deviceId) return;
     const cleanId = String(deviceId).trim();
 
-    // Remove any previous registration for this socket or device
-    deviceToSocket.set(cleanId, socket.id);
     socketToDevice.set(socket.id, cleanId);
     socket.join(`device_${cleanId}`);
 
-    console.log(`[Socket] Device registered: ${cleanId} -> ${socket.id}`);
+    console.log(`[Socket] Device registered: ${cleanId} (socket: ${socket.id})`);
     socket.emit('registered', { deviceId: cleanId });
   });
 
   // 2. Outgoing Call (Offer)
   socket.on('call-user', ({ targetId, callerId, callType, offer }) => {
     const cleanTarget = String(targetId).trim();
-    const targetSocketId = deviceToSocket.get(cleanTarget);
+    const cleanCaller = String(callerId).trim();
 
-    if (!targetSocketId || !io.sockets.sockets.has(targetSocketId)) {
+    console.log(`[Call] Request: ${cleanCaller} -> ${cleanTarget} (${callType})`);
+
+    const targetRoom = io.sockets.adapter.rooms.get(`device_${cleanTarget}`);
+    const isOnline = targetRoom && targetRoom.size > 0;
+
+    if (!isOnline) {
       console.log(`[Call] Target offline: ${cleanTarget}`);
       socket.emit('call-error', {
         reason: 'offline',
@@ -109,15 +111,15 @@ io.on('connection', (socket) => {
     }
 
     // Check if target is already on another call
-    if (activeCalls.has(targetSocketId)) {
+    if (activeCalls.has(cleanTarget)) {
       console.log(`[Call] Target busy: ${cleanTarget}`);
       socket.emit('call-busy', { targetId: cleanTarget });
       return;
     }
 
-    console.log(`[Call] Routing call from ${callerId} to ${cleanTarget} (${callType})`);
-    io.to(targetSocketId).emit('incoming-call', {
-      callerId,
+    // Relay incoming-call to target device room
+    io.to(`device_${cleanTarget}`).emit('incoming-call', {
+      callerId: cleanCaller,
       callType,
       offer
     });
@@ -126,85 +128,72 @@ io.on('connection', (socket) => {
   // 3. Answer Call
   socket.on('answer-call', ({ targetId, responderId, answer }) => {
     const cleanTarget = String(targetId).trim();
-    const targetSocketId = deviceToSocket.get(cleanTarget);
+    const cleanResponder = String(responderId).trim();
 
-    if (targetSocketId) {
-      console.log(`[Call] Answer from ${responderId} to ${cleanTarget}`);
-      activeCalls.set(socket.id, targetSocketId);
-      activeCalls.set(targetSocketId, socket.id);
+    console.log(`[Call] Answer: ${cleanResponder} -> ${cleanTarget}`);
+    activeCalls.set(cleanResponder, cleanTarget);
+    activeCalls.set(cleanTarget, cleanResponder);
 
-      io.to(targetSocketId).emit('call-answered', {
-        responderId,
-        answer
-      });
-    }
+    // Relay call-answered to caller device room
+    io.to(`device_${cleanTarget}`).emit('call-answered', {
+      responderId: cleanResponder,
+      answer
+    });
   });
 
   // 4. Relay ICE Candidate
   socket.on('ice-candidate', ({ targetId, candidate }) => {
     const cleanTarget = String(targetId).trim();
-    const targetSocketId = deviceToSocket.get(cleanTarget);
-    if (targetSocketId && candidate) {
-      io.to(targetSocketId).emit('ice-candidate', { candidate });
+    if (candidate) {
+      io.to(`device_${cleanTarget}`).emit('ice-candidate', { candidate });
     }
   });
 
   // 5. Call Declined
   socket.on('call-declined', ({ targetId, reason }) => {
     const cleanTarget = String(targetId).trim();
-    const targetSocketId = deviceToSocket.get(cleanTarget);
-    if (targetSocketId) {
-      console.log(`[Call] Declined by target: ${cleanTarget}`);
-      io.to(targetSocketId).emit('call-declined', { reason: reason || 'declined' });
-    }
+    activeCalls.delete(cleanTarget);
+    console.log(`[Call] Declined: target ${cleanTarget}`);
+    io.to(`device_${cleanTarget}`).emit('call-declined', { reason: reason || 'declined' });
   });
 
   // 6. Call Busy
   socket.on('call-busy', ({ targetId }) => {
     const cleanTarget = String(targetId).trim();
-    const targetSocketId = deviceToSocket.get(cleanTarget);
-    if (targetSocketId) {
-      io.to(targetSocketId).emit('call-busy', { targetId: cleanTarget });
-    }
+    io.to(`device_${cleanTarget}`).emit('call-busy', { targetId: cleanTarget });
   });
 
   // 7. End Call
   socket.on('call-ended', ({ targetId }) => {
     const cleanTarget = String(targetId).trim();
-    const targetSocketId = deviceToSocket.get(cleanTarget);
+    const myDevice = socketToDevice.get(socket.id);
 
-    activeCalls.delete(socket.id);
-    if (targetSocketId) {
-      activeCalls.delete(targetSocketId);
-      console.log(`[Call] Call ended between ${socket.id} and ${targetSocketId}`);
-      io.to(targetSocketId).emit('call-ended');
-    }
+    if (myDevice) activeCalls.delete(myDevice);
+    if (cleanTarget) activeCalls.delete(cleanTarget);
+
+    console.log(`[Call] Ended call: ${myDevice} <-> ${cleanTarget}`);
+    io.to(`device_${cleanTarget}`).emit('call-ended');
   });
 
   // 8. Track State Sync (Mute / Camera On-Off)
   socket.on('track-toggle', ({ targetId, video, audio }) => {
     const cleanTarget = String(targetId).trim();
-    const targetSocketId = deviceToSocket.get(cleanTarget);
-    if (targetSocketId) {
-      io.to(targetSocketId).emit('track-toggle', { video, audio });
-    }
+    io.to(`device_${cleanTarget}`).emit('track-toggle', { video, audio });
   });
 
   // Disconnection Cleanup
   socket.on('disconnect', () => {
     const deviceId = socketToDevice.get(socket.id);
+    console.log(`[Socket] Disconnected: ${socket.id} (device: ${deviceId})`);
+    
     if (deviceId) {
-      console.log(`[Socket] Device disconnected: ${deviceId}`);
-      deviceToSocket.delete(deviceId);
       socketToDevice.delete(socket.id);
-    }
-
-    // If device was in an active call, notify the other peer
-    const peerSocketId = activeCalls.get(socket.id);
-    if (peerSocketId) {
-      activeCalls.delete(socket.id);
-      activeCalls.delete(peerSocketId);
-      io.to(peerSocketId).emit('call-ended', { reason: 'peer_disconnected' });
+      const peerDevice = activeCalls.get(deviceId);
+      if (peerDevice) {
+        activeCalls.delete(deviceId);
+        activeCalls.delete(peerDevice);
+        io.to(`device_${peerDevice}`).emit('call-ended', { reason: 'peer_disconnected' });
+      }
     }
   });
 });
