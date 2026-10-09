@@ -1,25 +1,45 @@
 <!DOCTYPE html>
-<html lang="en" class="h-full bg-slate-950">
+<html lang="en" class="h-full">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  
+  <!-- PWA & Mobile Meta Tags -->
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="P2P Call" />
+  <meta name="apple-mobile-web-app-title" content="Kurakani" />
   <meta name="theme-color" content="#0f172a" />
-  <meta name="description" content="Production-ready ephemeral Peer-to-Peer Voice and Video Calling Progressive Web App" />
+  <meta name="description" content="Production-ready persistent P2P WebRTC Voice and Video Calling Progressive Web App" />
   
-  <title>P2P Direct Call | Ephemeral Audio & Video</title>
+  <title>Kurakani | P2P WebRTC Direct Call</title>
 
-  <!-- PWA Manifest & Icons -->
-  <link rel="manifest" href="manifest.json" />
-  <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
-  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <!-- PWA Manifest & App Icons -->
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
 
-  <!-- Tailwind CSS CDN -->
+  <!-- Immediate Theme Initializer (prevents flash of wrong theme) -->
+  <script>
+    (function() {
+      try {
+        const savedTheme = localStorage.getItem('kurakani_theme');
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = savedTheme || (prefersDark ? 'dark' : 'light');
+        if (theme === 'dark') {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      } catch (e) {}
+    })();
+  </script>
+
+  <!-- Tailwind CSS CDN with class-based Dark Mode -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
+      darkMode: 'class',
       theme: {
         extend: {
           colors: {
@@ -52,17 +72,22 @@
           }
         }
       }
+    };
+  </script>
+
+  <!-- FontAwesome 6 Icons CDN -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+
+  <!-- Socket.io Client (Backend served with CDN fallback) -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    if (typeof io === 'undefined') {
+      document.write('<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"><\/script>');
     }
   </script>
 
-  <!-- FontAwesome 6 CDN -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
-
-  <!-- PeerJS CDN -->
-  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-
   <style>
-    /* Full mobile viewport locking & touch ergonomics */
+    /* Viewport locking & mobile touch optimization */
     html, body {
       height: 100%;
       height: 100dvh;
@@ -74,16 +99,11 @@
       -webkit-touch-callout: none;
     }
 
-    /* Safe area padding utilities for iOS notch & home bar */
+    /* iOS safe-area utilities */
     .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
     .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
-    .h-safe-screen { height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
 
-    /* Custom scrollbar hiding */
-    .no-scrollbar::-webkit-scrollbar { display: none; }
-    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-
-    /* Mirror video stream for selfie preview */
+    /* Mirror webcam preview */
     .mirror-video {
       transform: scaleX(-1);
     }
@@ -94,131 +114,132 @@
     }
     .dial-btn:active {
       transform: scale(0.92);
-      filter: brightness(1.25);
+      filter: brightness(1.2);
     }
 
-    /* Glassmorphism utility */
+    /* Glassmorphism helpers for Light / Dark mode */
     .glass-card {
-      background: rgba(30, 41, 59, 0.65);
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
     }
     .glass-dock {
-      background: rgba(15, 23, 42, 0.85);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(255, 255, 255, 0.12);
     }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 flex flex-col justify-between overflow-hidden relative">
+<body class="bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col justify-between overflow-hidden relative transition-colors duration-300">
 
   <!-- Ambient Glow Background -->
   <div class="fixed inset-0 pointer-events-none z-0 overflow-hidden">
-    <div class="absolute -top-32 -left-32 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl"></div>
-    <div class="absolute -bottom-32 -right-32 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl"></div>
-    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-cyan-500/5 rounded-full blur-3xl"></div>
+    <div class="absolute -top-32 -left-32 w-96 h-96 bg-emerald-500/15 dark:bg-emerald-500/10 rounded-full blur-3xl"></div>
+    <div class="absolute -bottom-32 -right-32 w-96 h-96 bg-indigo-500/15 dark:bg-indigo-500/10 rounded-full blur-3xl"></div>
+    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-cyan-500/10 dark:bg-cyan-500/5 rounded-full blur-3xl"></div>
   </div>
 
   <!-- TOAST NOTIFICATION CONTAINER -->
   <div id="toastContainer" class="fixed top-5 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none transition-all duration-300"></div>
 
   <!-- MAIN APP CONTAINER (Centered on desktop, full bleed on mobile) -->
-  <main class="w-full max-w-md h-full mx-auto flex flex-col justify-between relative z-10 pt-safe pb-safe shadow-2xl bg-slate-950/40">
+  <main class="w-full max-w-md h-full mx-auto flex flex-col justify-between relative z-10 pt-safe pb-safe shadow-2xl bg-white/70 dark:bg-slate-950/40 backdrop-blur-md transition-colors duration-300">
 
     <!-- ========================================== -->
     <!-- 1. IDLE STATE SCREEN                       -->
     <!-- ========================================== -->
     <div id="screenIdle" class="flex flex-col flex-1 h-full justify-between p-4 transition-opacity duration-300">
       
-      <!-- TOP SECTION: HEADER & ASSIGNED PHONE ID -->
-      <header class="flex flex-col gap-3">
-        <!-- Brand & Connection Status Bar -->
+      <!-- TOP SECTION: HEADER & PERSISTENT 15-DIGIT DEVICE ID -->
+      <header class="flex flex-col gap-2.5">
+        <!-- Brand & Actions Bar -->
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
             <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-emerald-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
               <i class="fa-solid fa-phone-volume text-white text-xs"></i>
             </div>
             <div>
-              <h1 class="text-sm font-bold tracking-wider text-slate-100 uppercase">Kurakani</h1>
-              <p class="text-[10px] text-slate-400">Direct P2P Calling</p>
+              <h1 class="text-sm font-bold tracking-wider text-slate-900 dark:text-slate-100 uppercase">Kurakani</h1>
+              <p class="text-[10px] text-slate-500 dark:text-slate-400">Direct P2P Calling</p>
             </div>
           </div>
 
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-1.5">
+            <!-- Theme Toggle Button (Light / Dark) -->
+            <button id="btnThemeToggle" title="Toggle Theme (Light / Dark)" class="w-8 h-8 rounded-xl bg-slate-200/80 hover:bg-slate-300/80 dark:bg-slate-800/80 dark:hover:bg-slate-700/80 active:scale-95 text-slate-700 dark:text-slate-300 border border-slate-300/60 dark:border-slate-700/60 flex items-center justify-center transition shadow-sm">
+              <i id="themeToggleIcon" class="fa-solid fa-moon text-xs"></i>
+            </button>
+
             <!-- PWA Install Button (Dynamic) -->
-            <button id="btnInstallPwa" class="hidden px-2.5 py-1 rounded-full bg-indigo-600/30 border border-indigo-500/40 text-[11px] font-medium text-indigo-300 hover:bg-indigo-600/50 transition">
+            <button id="btnInstallPwa" class="hidden px-2.5 py-1 rounded-full bg-indigo-600/20 border border-indigo-500/40 text-[11px] font-medium text-indigo-600 dark:text-indigo-300 hover:bg-indigo-600/30 transition">
               <i class="fa-solid fa-download mr-1"></i>Install
             </button>
             
-            <!-- Connection Status Badge -->
-            <div id="peerStatusBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-800/80 border border-slate-700/60 text-[11px] text-slate-300">
+            <!-- Socket Connection Status Badge -->
+            <div id="peerStatusBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-200/80 dark:bg-slate-800/80 border border-slate-300/60 dark:border-slate-700/60 text-[11px] text-slate-700 dark:text-slate-300">
               <span id="peerStatusDot" class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
               <span id="peerStatusText">Connecting...</span>
             </div>
           </div>
         </div>
 
-        <!-- Assigned Ephemeral Phone ID Card -->
-        <div class="glass-card rounded-2xl p-3.5 flex items-center justify-between shadow-xl">
-          <div class="flex flex-col">
-            <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1">
-              <i class="fa-solid fa-shield-halved text-emerald-400 text-xs"></i> Your Phone ID
+        <!-- Persistent 15-Digit Device ID Card -->
+        <div class="glass-card bg-white/80 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800/80 rounded-2xl p-3 flex items-center justify-between shadow-lg transition-colors duration-300">
+          <div class="flex flex-col min-w-0 flex-1 mr-2">
+            <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1">
+              <i class="fa-solid fa-shield-halved text-emerald-500 dark:text-emerald-400 text-xs"></i> Your 15-Digit Device ID
             </span>
-            <div class="flex items-baseline gap-2 mt-0.5">
-              <span id="myPhoneIdDisplay" class="font-mono text-2xl font-black tracking-widest text-emerald-400 drop-shadow">--- ---</span>
+            <div class="mt-0.5 overflow-hidden">
+              <span id="myPhoneIdDisplay" class="font-mono text-base sm:text-lg font-black tracking-wide text-emerald-600 dark:text-emerald-400 truncate block select-all">--- --- --- --- ---</span>
             </div>
           </div>
 
-          <div class="flex items-center gap-1.5">
+          <div class="flex items-center gap-1 shrink-0">
             <!-- Copy ID Button -->
-            <button id="btnCopyId" title="Copy Phone ID" class="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 border border-slate-700 flex items-center justify-center transition">
-              <i class="fa-regular fa-copy text-sm"></i>
+            <button id="btnCopyId" title="Copy 15-Digit Device ID" class="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 active:scale-95 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 flex items-center justify-center transition">
+              <i class="fa-regular fa-copy text-xs"></i>
             </button>
             <!-- Share Link Button -->
-            <button id="btnShareId" title="Share Direct Dial Link" class="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 border border-slate-700 flex items-center justify-center transition">
-              <i class="fa-solid fa-arrow-up-right-from-square text-sm"></i>
+            <button id="btnShareId" title="Share Direct Dial Link" class="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 active:scale-95 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 flex items-center justify-center transition">
+              <i class="fa-solid fa-arrow-up-right-from-square text-xs"></i>
             </button>
-            <!-- Refresh New ID Button -->
-            <button id="btnRefreshId" title="Generate New Ephemeral ID" class="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-400 hover:text-slate-200 border border-slate-700 flex items-center justify-center transition">
-              <i class="fa-solid fa-arrows-rotate text-sm"></i>
+            <!-- Refresh New 15-Digit ID Button -->
+            <button id="btnRefreshId" title="Generate New 15-Digit Device ID" class="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 border border-slate-200 dark:border-slate-700 flex items-center justify-center transition">
+              <i class="fa-solid fa-arrows-rotate text-xs"></i>
             </button>
           </div>
         </div>
 
         <!-- CAMERA PICTURE-IN-PICTURE PREVIEW CARD (IDLE STATE) -->
-        <div class="glass-card rounded-2xl p-2.5 relative overflow-hidden group">
-          <div class="flex items-center justify-between mb-2 px-1">
+        <div class="glass-card bg-white/80 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800/80 rounded-2xl p-2 relative overflow-hidden transition-colors duration-300">
+          <div class="flex items-center justify-between mb-1.5 px-1">
             <div class="flex items-center gap-1.5">
-              <i class="fa-solid fa-video text-indigo-400 text-xs"></i>
-              <span class="text-[11px] font-medium text-slate-300">Camera Self-View</span>
+              <i class="fa-solid fa-video text-indigo-500 dark:text-indigo-400 text-xs"></i>
+              <span class="text-[11px] font-medium text-slate-700 dark:text-slate-300">Camera Self-View</span>
             </div>
             <div class="flex items-center gap-1">
               <!-- Flip Camera (Front/Rear) -->
-              <button id="btnIdleFlipCam" title="Flip Camera" class="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs flex items-center justify-center transition">
+              <button id="btnIdleFlipCam" title="Flip Camera" class="w-6 h-6 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-[10px] flex items-center justify-center transition">
                 <i class="fa-solid fa-camera-rotate"></i>
               </button>
               <!-- Toggle Idle Camera Preview -->
-              <button id="btnIdleToggleCam" title="Toggle Camera Preview" class="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs flex items-center justify-center transition">
+              <button id="btnIdleToggleCam" title="Toggle Camera Preview" class="w-6 h-6 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-[10px] flex items-center justify-center transition">
                 <i id="btnIdleToggleCamIcon" class="fa-solid fa-eye"></i>
               </button>
             </div>
           </div>
 
           <!-- Video Preview Container -->
-          <div class="relative w-full h-24 rounded-xl overflow-hidden bg-slate-900 border border-slate-800 flex items-center justify-center">
+          <div class="relative w-full h-20 sm:h-24 rounded-xl overflow-hidden bg-slate-200 dark:bg-slate-950 border border-slate-300/60 dark:border-slate-800 flex items-center justify-center">
             <video id="idleVideoPreview" autoplay playsinline muted class="w-full h-full object-cover mirror-video hidden"></video>
             
-            <div id="idleVideoPlaceholder" class="flex flex-col items-center justify-center gap-1 text-slate-500">
-              <div class="w-9 h-9 rounded-full bg-slate-800 flex items-center justify-center text-slate-400">
+            <div id="idleVideoPlaceholder" class="flex flex-col items-center justify-center gap-1 text-slate-400 dark:text-slate-500">
+              <div class="w-8 h-8 rounded-full bg-slate-300/80 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
                 <i class="fa-solid fa-video-slash text-xs"></i>
               </div>
-              <span class="text-[10px]">Preview Paused (Tap eye to enable)</span>
+              <span class="text-[9px]">Preview Paused (Tap eye to test camera)</span>
             </div>
 
             <!-- Permission or Status Pill -->
-            <div id="idleCameraBadge" class="absolute bottom-1.5 left-2 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-sm text-[9px] text-slate-300 font-mono flex items-center gap-1">
+            <div id="idleCameraBadge" class="absolute bottom-1.5 left-2 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-sm text-[9px] text-slate-200 font-mono flex items-center gap-1">
               <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
               <span>STANDBY</span>
             </div>
@@ -226,110 +247,110 @@
         </div>
       </header>
 
-      <!-- MIDDLE SECTION: DIALED NUMBER DISPLAY -->
-      <div class="my-2 flex flex-col items-center justify-center">
-        <div class="w-full px-4 flex items-center justify-between">
-          <div class="flex-1 text-center">
-            <span id="dialedNumberDisplay" class="font-mono text-3xl sm:text-4xl font-extrabold tracking-widest text-slate-100 transition-all select-all"></span>
-            <span id="dialPlaceholder" class="text-slate-600 text-sm tracking-normal font-sans">Enter 6-digit ID to call</span>
+      <!-- MIDDLE SECTION: DIALED NUMBER DISPLAY (15-DIGIT SUPPORT) -->
+      <div class="my-1.5 flex flex-col items-center justify-center">
+        <div class="w-full px-2 flex items-center justify-between">
+          <div class="flex-1 text-center min-w-0 px-1">
+            <span id="dialedNumberDisplay" class="font-mono text-lg sm:text-xl font-extrabold tracking-wide text-slate-900 dark:text-slate-100 transition-all select-all break-all"></span>
+            <span id="dialPlaceholder" class="text-slate-400 dark:text-slate-600 text-xs sm:text-sm tracking-normal font-sans">Enter 15-digit ID to call</span>
           </div>
 
           <!-- Backspace / Clear Button -->
-          <button id="btnBackspace" class="w-10 h-10 rounded-xl text-slate-400 hover:text-rose-400 active:scale-90 flex items-center justify-center transition" title="Backspace (Hold to clear)">
-            <i class="fa-solid fa-delete-left text-lg"></i>
+          <button id="btnBackspace" class="w-9 h-9 rounded-xl text-slate-400 hover:text-rose-500 active:scale-90 flex items-center justify-center transition shrink-0" title="Backspace (Hold to clear)">
+            <i class="fa-solid fa-delete-left text-base"></i>
           </button>
         </div>
       </div>
 
       <!-- BOTTOM SECTION: PHONE KEYPAD & CALL BUTTONS -->
-      <div class="flex flex-col gap-2.5">
+      <div class="flex flex-col gap-2">
         <!-- Keypad Grid (3x4) -->
-        <div class="grid grid-cols-3 gap-2 px-3">
+        <div class="grid grid-cols-3 gap-1.5 sm:gap-2 px-2">
           <!-- Button 1 -->
-          <button data-key="1" class="dial-btn dial-key-btn h-14 rounded-2xl glass-card flex flex-col items-center justify-center hover:bg-slate-700/60 text-slate-100">
-            <span class="font-mono text-xl font-bold leading-none">1</span>
-            <span class="text-[9px] font-semibold text-slate-500 tracking-widest">&nbsp;</span>
+          <button data-key="1" class="dial-btn dial-key-btn h-12 sm:h-13 rounded-2xl glass-card bg-white/90 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800/60 border border-slate-200/90 dark:border-slate-800/80 shadow-sm flex flex-col items-center justify-center text-slate-900 dark:text-slate-100">
+            <span class="font-mono text-lg sm:text-xl font-bold leading-none">1</span>
+            <span class="text-[8px] font-semibold text-slate-400 dark:text-slate-500 tracking-widest">&nbsp;</span>
           </button>
           <!-- Button 2 -->
-          <button data-key="2" class="dial-btn dial-key-btn h-14 rounded-2xl glass-card flex flex-col items-center justify-center hover:bg-slate-700/60 text-slate-100">
-            <span class="font-mono text-xl font-bold leading-none">2</span>
-            <span class="text-[9px] font-semibold text-slate-400 tracking-widest">ABC</span>
+          <button data-key="2" class="dial-btn dial-key-btn h-12 sm:h-13 rounded-2xl glass-card bg-white/90 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800/60 border border-slate-200/90 dark:border-slate-800/80 shadow-sm flex flex-col items-center justify-center text-slate-900 dark:text-slate-100">
+            <span class="font-mono text-lg sm:text-xl font-bold leading-none">2</span>
+            <span class="text-[8px] font-semibold text-slate-400 dark:text-slate-400 tracking-widest">ABC</span>
           </button>
           <!-- Button 3 -->
-          <button data-key="3" class="dial-btn dial-key-btn h-14 rounded-2xl glass-card flex flex-col items-center justify-center hover:bg-slate-700/60 text-slate-100">
-            <span class="font-mono text-xl font-bold leading-none">3</span>
-            <span class="text-[9px] font-semibold text-slate-400 tracking-widest">DEF</span>
+          <button data-key="3" class="dial-btn dial-key-btn h-12 sm:h-13 rounded-2xl glass-card bg-white/90 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800/60 border border-slate-200/90 dark:border-slate-800/80 shadow-sm flex flex-col items-center justify-center text-slate-900 dark:text-slate-100">
+            <span class="font-mono text-lg sm:text-xl font-bold leading-none">3</span>
+            <span class="text-[8px] font-semibold text-slate-400 dark:text-slate-400 tracking-widest">DEF</span>
           </button>
 
           <!-- Button 4 -->
-          <button data-key="4" class="dial-btn dial-key-btn h-14 rounded-2xl glass-card flex flex-col items-center justify-center hover:bg-slate-700/60 text-slate-100">
-            <span class="font-mono text-xl font-bold leading-none">4</span>
-            <span class="text-[9px] font-semibold text-slate-400 tracking-widest">GHI</span>
+          <button data-key="4" class="dial-btn dial-key-btn h-12 sm:h-13 rounded-2xl glass-card bg-white/90 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800/60 border border-slate-200/90 dark:border-slate-800/80 shadow-sm flex flex-col items-center justify-center text-slate-900 dark:text-slate-100">
+            <span class="font-mono text-lg sm:text-xl font-bold leading-none">4</span>
+            <span class="text-[8px] font-semibold text-slate-400 dark:text-slate-400 tracking-widest">GHI</span>
           </button>
           <!-- Button 5 -->
-          <button data-key="5" class="dial-btn dial-key-btn h-14 rounded-2xl glass-card flex flex-col items-center justify-center hover:bg-slate-700/60 text-slate-100">
-            <span class="font-mono text-xl font-bold leading-none">5</span>
-            <span class="text-[9px] font-semibold text-slate-400 tracking-widest">JKL</span>
+          <button data-key="5" class="dial-btn dial-key-btn h-12 sm:h-13 rounded-2xl glass-card bg-white/90 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800/60 border border-slate-200/90 dark:border-slate-800/80 shadow-sm flex flex-col items-center justify-center text-slate-900 dark:text-slate-100">
+            <span class="font-mono text-lg sm:text-xl font-bold leading-none">5</span>
+            <span class="text-[8px] font-semibold text-slate-400 dark:text-slate-400 tracking-widest">JKL</span>
           </button>
           <!-- Button 6 -->
-          <button data-key="6" class="dial-btn dial-key-btn h-14 rounded-2xl glass-card flex flex-col items-center justify-center hover:bg-slate-700/60 text-slate-100">
-            <span class="font-mono text-xl font-bold leading-none">6</span>
-            <span class="text-[9px] font-semibold text-slate-400 tracking-widest">MNO</span>
+          <button data-key="6" class="dial-btn dial-key-btn h-12 sm:h-13 rounded-2xl glass-card bg-white/90 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800/60 border border-slate-200/90 dark:border-slate-800/80 shadow-sm flex flex-col items-center justify-center text-slate-900 dark:text-slate-100">
+            <span class="font-mono text-lg sm:text-xl font-bold leading-none">6</span>
+            <span class="text-[8px] font-semibold text-slate-400 dark:text-slate-400 tracking-widest">MNO</span>
           </button>
 
           <!-- Button 7 -->
-          <button data-key="7" class="dial-btn dial-key-btn h-14 rounded-2xl glass-card flex flex-col items-center justify-center hover:bg-slate-700/60 text-slate-100">
-            <span class="font-mono text-xl font-bold leading-none">7</span>
-            <span class="text-[9px] font-semibold text-slate-400 tracking-widest">PQRS</span>
+          <button data-key="7" class="dial-btn dial-key-btn h-12 sm:h-13 rounded-2xl glass-card bg-white/90 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800/60 border border-slate-200/90 dark:border-slate-800/80 shadow-sm flex flex-col items-center justify-center text-slate-900 dark:text-slate-100">
+            <span class="font-mono text-lg sm:text-xl font-bold leading-none">7</span>
+            <span class="text-[8px] font-semibold text-slate-400 dark:text-slate-400 tracking-widest">PQRS</span>
           </button>
           <!-- Button 8 -->
-          <button data-key="8" class="dial-btn dial-key-btn h-14 rounded-2xl glass-card flex flex-col items-center justify-center hover:bg-slate-700/60 text-slate-100">
-            <span class="font-mono text-xl font-bold leading-none">8</span>
-            <span class="text-[9px] font-semibold text-slate-400 tracking-widest">TUV</span>
+          <button data-key="8" class="dial-btn dial-key-btn h-12 sm:h-13 rounded-2xl glass-card bg-white/90 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800/60 border border-slate-200/90 dark:border-slate-800/80 shadow-sm flex flex-col items-center justify-center text-slate-900 dark:text-slate-100">
+            <span class="font-mono text-lg sm:text-xl font-bold leading-none">8</span>
+            <span class="text-[8px] font-semibold text-slate-400 dark:text-slate-400 tracking-widest">TUV</span>
           </button>
           <!-- Button 9 -->
-          <button data-key="9" class="dial-btn dial-key-btn h-14 rounded-2xl glass-card flex flex-col items-center justify-center hover:bg-slate-700/60 text-slate-100">
-            <span class="font-mono text-xl font-bold leading-none">9</span>
-            <span class="text-[9px] font-semibold text-slate-400 tracking-widest">WXYZ</span>
+          <button data-key="9" class="dial-btn dial-key-btn h-12 sm:h-13 rounded-2xl glass-card bg-white/90 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800/60 border border-slate-200/90 dark:border-slate-800/80 shadow-sm flex flex-col items-center justify-center text-slate-900 dark:text-slate-100">
+            <span class="font-mono text-lg sm:text-xl font-bold leading-none">9</span>
+            <span class="text-[8px] font-semibold text-slate-400 dark:text-slate-400 tracking-widest">WXYZ</span>
           </button>
 
           <!-- Button * -->
-          <button data-key="*" class="dial-btn dial-key-btn h-14 rounded-2xl glass-card flex flex-col items-center justify-center hover:bg-slate-700/60 text-slate-100">
-            <span class="font-mono text-xl font-bold leading-none">*</span>
-            <span class="text-[9px] font-semibold text-slate-500 tracking-widest">&nbsp;</span>
+          <button data-key="*" class="dial-btn dial-key-btn h-12 sm:h-13 rounded-2xl glass-card bg-white/90 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800/60 border border-slate-200/90 dark:border-slate-800/80 shadow-sm flex flex-col items-center justify-center text-slate-900 dark:text-slate-100">
+            <span class="font-mono text-lg sm:text-xl font-bold leading-none">*</span>
+            <span class="text-[8px] font-semibold text-slate-400 dark:text-slate-500 tracking-widest">&nbsp;</span>
           </button>
           <!-- Button 0 -->
-          <button data-key="0" class="dial-btn dial-key-btn h-14 rounded-2xl glass-card flex flex-col items-center justify-center hover:bg-slate-700/60 text-slate-100">
-            <span class="font-mono text-xl font-bold leading-none">0</span>
-            <span class="text-[9px] font-semibold text-slate-400 tracking-widest">+</span>
+          <button data-key="0" class="dial-btn dial-key-btn h-12 sm:h-13 rounded-2xl glass-card bg-white/90 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800/60 border border-slate-200/90 dark:border-slate-800/80 shadow-sm flex flex-col items-center justify-center text-slate-900 dark:text-slate-100">
+            <span class="font-mono text-lg sm:text-xl font-bold leading-none">0</span>
+            <span class="text-[8px] font-semibold text-slate-400 dark:text-slate-400 tracking-widest">+</span>
           </button>
           <!-- Button # -->
-          <button data-key="#" class="dial-btn dial-key-btn h-14 rounded-2xl glass-card flex flex-col items-center justify-center hover:bg-slate-700/60 text-slate-100">
-            <span class="font-mono text-xl font-bold leading-none">#</span>
-            <span class="text-[9px] font-semibold text-slate-500 tracking-widest">&nbsp;</span>
+          <button data-key="#" class="dial-btn dial-key-btn h-12 sm:h-13 rounded-2xl glass-card bg-white/90 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800/60 border border-slate-200/90 dark:border-slate-800/80 shadow-sm flex flex-col items-center justify-center text-slate-900 dark:text-slate-100">
+            <span class="font-mono text-lg sm:text-xl font-bold leading-none">#</span>
+            <span class="text-[8px] font-semibold text-slate-400 dark:text-slate-500 tracking-widest">&nbsp;</span>
           </button>
         </div>
 
         <!-- ACTION CALL BUTTONS: VOICE CALL & VIDEO CALL -->
-        <div class="grid grid-cols-2 gap-3 px-3 pt-1">
+        <div class="grid grid-cols-2 gap-2.5 px-2 pt-1">
           <!-- Voice Call (Green) -->
-          <button id="btnVoiceCall" class="dial-btn h-14 rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 active:scale-95 text-white font-bold flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-600/30 border border-emerald-400/30">
-            <div class="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-              <i class="fa-solid fa-phone text-sm"></i>
+          <button id="btnVoiceCall" class="dial-btn h-13 rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 active:scale-95 text-white font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 border border-emerald-400/30">
+            <div class="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center">
+              <i class="fa-solid fa-phone text-xs"></i>
             </div>
             <div class="text-left">
-              <div class="text-sm leading-tight">Voice Call</div>
+              <div class="text-xs sm:text-sm leading-tight">Voice Call</div>
               <div class="text-[9px] text-emerald-100/70 font-normal">Encrypted Audio</div>
             </div>
           </button>
 
           <!-- Video Call (Indigo) -->
-          <button id="btnVideoCall" class="dial-btn h-14 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 active:scale-95 text-white font-bold flex items-center justify-center gap-2.5 shadow-lg shadow-indigo-600/30 border border-indigo-400/30">
-            <div class="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-              <i class="fa-solid fa-video text-sm"></i>
+          <button id="btnVideoCall" class="dial-btn h-13 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 active:scale-95 text-white font-bold flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 border border-indigo-400/30">
+            <div class="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center">
+              <i class="fa-solid fa-video text-xs"></i>
             </div>
             <div class="text-left">
-              <div class="text-sm leading-tight">Video Call</div>
+              <div class="text-xs sm:text-sm leading-tight">Video Call</div>
               <div class="text-[9px] text-indigo-100/70 font-normal">HD Video & Audio</div>
             </div>
           </button>
@@ -345,14 +366,13 @@
       <!-- Top Outgoing Header -->
       <div class="flex flex-col items-center gap-1 pt-safe">
         <span class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-          <i class="fa-solid fa-lock text-emerald-400 text-[10px]"></i> End-to-End Encrypted
+          <i class="fa-solid fa-lock text-emerald-400 text-[10px]"></i> WebRTC DTLS/SRTP Encrypted
         </span>
         <div id="outgoingCallTypeBadge" class="text-xs text-indigo-400 font-semibold mt-1">HD Video Call</div>
       </div>
 
       <!-- Center Radar & Target ID Pulse -->
       <div class="flex flex-col items-center justify-center relative my-auto">
-        <!-- Radar concentric rings -->
         <div class="relative w-44 h-44 flex items-center justify-center">
           <div class="absolute inset-0 rounded-full border border-emerald-500/30 animate-ripple-slow"></div>
           <div class="absolute inset-0 rounded-full border border-indigo-500/40 animate-ripple-fast"></div>
@@ -363,19 +383,19 @@
           </div>
         </div>
 
-        <div class="text-center mt-6">
-          <h2 class="text-xs uppercase font-bold tracking-widest text-slate-400">Calling Target ID</h2>
-          <div id="outgoingTargetId" class="font-mono text-3xl font-black text-slate-100 tracking-widest mt-1">--- ---</div>
+        <div class="text-center mt-6 px-4">
+          <h2 class="text-xs uppercase font-bold tracking-widest text-slate-400">Calling Target Device</h2>
+          <div id="outgoingTargetId" class="font-mono text-xl sm:text-2xl font-black text-slate-100 tracking-wide mt-1 break-all">--- --- --- --- ---</div>
           <p id="outgoingStatusSubtext" class="text-xs text-slate-400 mt-2 flex items-center justify-center gap-1.5">
             <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-            Connecting signaling stream...
+            Contacting Socket.io signaling...
           </p>
         </div>
       </div>
 
       <!-- Bottom Cancel Call Button -->
       <div class="pb-safe flex flex-col items-center gap-2">
-        <button id="btnCancelCall" class="w-20 h-20 rounded-full bg-rose-600 hover:bg-rose-500 active:scale-95 text-white flex items-center justify-center shadow-2xl shadow-rose-600/40 border-2 border-rose-400/40 transition">
+        <button id="btnCancelCall" class="w-18 h-18 sm:w-20 sm:h-20 rounded-full bg-rose-600 hover:bg-rose-500 active:scale-95 text-white flex items-center justify-center shadow-2xl shadow-rose-600/40 border-2 border-rose-400/40 transition">
           <i class="fa-solid fa-phone-slash text-2xl"></i>
         </button>
         <span class="text-xs font-semibold text-rose-300">Cancel Call</span>
@@ -407,9 +427,9 @@
           </div>
         </div>
 
-        <div class="text-center mt-6">
+        <div class="text-center mt-6 px-4">
           <h2 class="text-xs uppercase font-bold tracking-widest text-slate-400">Incoming Call From</h2>
-          <div id="incomingCallerId" class="font-mono text-3xl font-black text-slate-100 tracking-widest mt-1">--- ---</div>
+          <div id="incomingCallerId" class="font-mono text-xl sm:text-2xl font-black text-slate-100 tracking-wide mt-1 break-all">--- --- --- --- ---</div>
           <p class="text-xs text-emerald-400/90 mt-2 font-mono flex items-center justify-center gap-1">
             <i class="fa-solid fa-shield-halved text-xs"></i> Peer-to-Peer Verified
           </p>
@@ -443,7 +463,7 @@
       
       <!-- FULL-BLEED REMOTE STREAM AREA -->
       <div class="absolute inset-0 w-full h-full bg-slate-950 flex items-center justify-center overflow-hidden">
-        <!-- Remote Video & Dedicated Remote Audio Stream -->
+        <!-- Remote Video & Dedicated Audio Stream -->
         <video id="remoteVideo" autoplay playsinline class="w-full h-full object-cover"></video>
         <audio id="remoteAudio" autoplay playsinline class="hidden"></audio>
 
@@ -455,7 +475,7 @@
               <i class="fa-solid fa-user text-4xl"></i>
             </div>
           </div>
-          <div id="inCallRemoteIdAudio" class="font-mono text-2xl font-bold tracking-widest text-slate-100">--- ---</div>
+          <div id="inCallRemoteIdAudio" class="font-mono text-xl sm:text-2xl font-bold tracking-wide text-slate-100 px-4 text-center break-all">--- --- --- --- ---</div>
           <div class="flex items-center gap-2 mt-2 px-3 py-1 rounded-full bg-slate-800/60 border border-slate-700 text-xs text-slate-400">
             <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
             <span>Voice Stream Active</span>
@@ -465,14 +485,14 @@
 
       <!-- TOP IN-CALL HEADER DOCK -->
       <div class="relative z-20 pt-safe px-4 pt-4 flex items-center justify-between pointer-events-none">
-        <div class="glass-dock pointer-events-auto rounded-full px-3.5 py-1.5 flex items-center gap-2.5 shadow-xl">
-          <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span id="inCallRemoteIdBadge" class="font-mono text-xs font-bold text-slate-200">--- ---</span>
+        <div class="glass-dock bg-slate-900/80 pointer-events-auto rounded-full px-3.5 py-1.5 flex items-center gap-2 shadow-xl border border-slate-700/60 max-w-[70%]">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+          <span id="inCallRemoteIdBadge" class="font-mono text-xs font-bold text-slate-200 truncate">--- ---</span>
           <span class="text-slate-600">|</span>
-          <span id="callDurationTimer" class="font-mono text-xs font-semibold text-emerald-400">00:00</span>
+          <span id="callDurationTimer" class="font-mono text-xs font-semibold text-emerald-400 shrink-0">00:00</span>
         </div>
 
-        <div class="glass-dock pointer-events-auto rounded-full px-3 py-1.5 flex items-center gap-1.5 shadow-xl text-[11px] text-slate-300">
+        <div class="glass-dock bg-slate-900/80 pointer-events-auto rounded-full px-3 py-1.5 flex items-center gap-1.5 shadow-xl text-[11px] text-slate-300 border border-slate-700/60">
           <i class="fa-solid fa-lock text-emerald-400 text-xs"></i>
           <span>DTLS/SRTP</span>
         </div>
@@ -496,7 +516,7 @@
 
       <!-- FIXED BOTTOM IN-CALL CONTROL PANEL -->
       <div class="relative z-20 pb-safe pb-6 px-4 flex justify-center">
-        <div class="glass-dock rounded-full px-5 py-3 flex items-center gap-3 sm:gap-4 shadow-2xl">
+        <div class="glass-dock bg-slate-900/85 rounded-full px-5 py-3 flex items-center gap-3 sm:gap-4 shadow-2xl border border-slate-700/60">
           
           <!-- Mic Toggle (Mute / Unmute) -->
           <button id="btnToggleMic" class="w-12 h-12 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-100 flex items-center justify-center border border-slate-700 active:scale-90 transition" title="Toggle Microphone">
@@ -529,20 +549,21 @@
   <!-- ========================================== -->
   <script>
     /**
-     * P2P DIRECT CALL (KURAKANI)
-     * Zero-Database, Ephemeral WebRTC Audio & Video Calling PWA
+     * KURAKANI P2P CALLING PWA
+     * WebRTC Audio & Video Calling with Socket.io Signaling
+     * Persistent 15-Digit Device ID & Light/Dark Mode
      */
 
-    // App Configuration & Namespacing
-    const APP_CONFIG = {
-      PEER_PREFIX: 'kk-', // Namespace on PeerJS public server to isolate our app
-      ICE_SERVERS: [
+    // WebRTC STUN Configuration (Standard Google Public STUNs)
+    const RTC_CONFIG = {
+      iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
         { urls: 'stun:stun3.l.google.com:19302' },
         { urls: 'stun:stun4.l.google.com:19302' }
-      ]
+      ],
+      sdpSemantics: 'unified-plan'
     };
 
     // UI States
@@ -561,11 +582,8 @@
         this.ctx = null;
         this.ringbackInterval = null;
         this.ringtoneInterval = null;
-        this.ringbackGain = null;
-        this.ringtoneGain = null;
-        this.activeNodes = [];
 
-        // DTMF Tone Frequencies
+        // DTMF Standard Frequencies
         this.dtmfFreqs = {
           '1': [697, 1209], '2': [697, 1336], '3': [697, 1477],
           '4': [770, 1209], '5': [770, 1336], '6': [770, 1477],
@@ -586,7 +604,7 @@
         }
       }
 
-      // Play DTMF tone for dial button
+      // Play DTMF keypress tone
       playDTMF(key) {
         this.initCtx();
         if (!this.ctx || !this.dtmfFreqs[key]) return;
@@ -616,9 +634,7 @@
           osc2.start(now);
           osc1.stop(now + 0.1);
           osc2.stop(now + 0.1);
-        } catch (e) {
-          console.warn('DTMF audio error:', e);
-        }
+        } catch (e) {}
       }
 
       // Synthetic Ringback Tone for Outgoing Calls (440Hz + 480Hz)
@@ -627,7 +643,7 @@
         this.stopRingback();
         if (!this.ctx) return;
 
-        const playRingbackBurst = () => {
+        const playBurst = () => {
           if (!this.ctx) return;
           try {
             const now = this.ctx.currentTime;
@@ -640,7 +656,6 @@
             osc1.frequency.setValueAtTime(440, now);
             osc2.frequency.setValueAtTime(480, now);
 
-            // 1.8s tone duration, smooth ramp
             gain.gain.setValueAtTime(0.0001, now);
             gain.gain.exponentialRampToValueAtTime(0.1, now + 0.05);
             gain.gain.setValueAtTime(0.1, now + 1.7);
@@ -654,14 +669,11 @@
             osc2.start(now);
             osc1.stop(now + 1.85);
             osc2.stop(now + 1.85);
-          } catch (e) {
-            console.warn('Ringback burst error:', e);
-          }
+          } catch (e) {}
         };
 
-        playRingbackBurst();
-        // Standard 4 second cycle (1.8s ring + 2.2s silence)
-        this.ringbackInterval = setInterval(playRingbackBurst, 4000);
+        playBurst();
+        this.ringbackInterval = setInterval(playBurst, 4000);
       }
 
       stopRingback() {
@@ -677,7 +689,7 @@
         this.stopRingtone();
         if (!this.ctx) return;
 
-        const playRingBurst = (offset = 0) => {
+        const playChime = (offset = 0) => {
           if (!this.ctx) return;
           try {
             const now = this.ctx.currentTime + offset;
@@ -685,7 +697,6 @@
             const osc2 = this.ctx.createOscillator();
             const gain = this.ctx.createGain();
 
-            // Modern electronic dual-tone ringer (853Hz + 960Hz)
             osc1.type = 'sine';
             osc2.type = 'sine';
             osc1.frequency.setValueAtTime(853, now);
@@ -704,19 +715,16 @@
             osc2.start(now);
             osc1.stop(now + 0.45);
             osc2.stop(now + 0.45);
-          } catch (e) {
-            console.warn('Ringtone burst error:', e);
-          }
+          } catch (e) {}
         };
 
-        const playDoubleRing = () => {
-          playRingBurst(0);      // First chime
-          playRingBurst(0.5);    // Second chime
+        const playDoubleChime = () => {
+          playChime(0);
+          playChime(0.5);
         };
 
-        playDoubleRing();
-        // Repeating cycle: 0.9s double-ring + 2.1s silence = 3.0s total
-        this.ringtoneInterval = setInterval(playDoubleRing, 3000);
+        playDoubleChime();
+        this.ringtoneInterval = setInterval(playDoubleChime, 3000);
       }
 
       stopRingtone() {
@@ -726,7 +734,6 @@
         }
       }
 
-      // Cheerful Call Connected Chime
       playConnected() {
         this.initCtx();
         if (!this.ctx) return;
@@ -734,25 +741,20 @@
           const now = this.ctx.currentTime;
           const osc = this.ctx.createOscillator();
           const gain = this.ctx.createGain();
-
           osc.type = 'sine';
-          osc.frequency.setValueAtTime(523.25, now); // C5
-          osc.frequency.setValueAtTime(659.25, now + 0.09); // E5
-
+          osc.frequency.setValueAtTime(523.25, now);
+          osc.frequency.setValueAtTime(659.25, now + 0.09);
           gain.gain.setValueAtTime(0.0001, now);
           gain.gain.exponentialRampToValueAtTime(0.15, now + 0.02);
           gain.gain.setValueAtTime(0.15, now + 0.16);
           gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
-
           osc.connect(gain);
           gain.connect(this.ctx.destination);
-
           osc.start(now);
           osc.stop(now + 0.25);
         } catch (e) {}
       }
 
-      // Soft Call Ended Boop
       playEnded() {
         this.initCtx();
         if (!this.ctx) return;
@@ -760,25 +762,20 @@
           const now = this.ctx.currentTime;
           const osc = this.ctx.createOscillator();
           const gain = this.ctx.createGain();
-
           osc.type = 'sine';
-          osc.frequency.setValueAtTime(440, now); // A4
-          osc.frequency.setValueAtTime(329.63, now + 0.1); // E4
-
+          osc.frequency.setValueAtTime(440, now);
+          osc.frequency.setValueAtTime(329.63, now + 0.1);
           gain.gain.setValueAtTime(0.0001, now);
           gain.gain.exponentialRampToValueAtTime(0.15, now + 0.02);
           gain.gain.setValueAtTime(0.15, now + 0.18);
           gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
-
           osc.connect(gain);
           gain.connect(this.ctx.destination);
-
           osc.start(now);
           osc.stop(now + 0.28);
         } catch (e) {}
       }
 
-      // Quick Busy / Error tone
       playBusy() {
         this.initCtx();
         if (!this.ctx) return;
@@ -786,16 +783,12 @@
           const now = this.ctx.currentTime;
           const osc = this.ctx.createOscillator();
           const gain = this.ctx.createGain();
-
           osc.type = 'square';
           osc.frequency.setValueAtTime(480, now);
-
           gain.gain.setValueAtTime(0.08, now);
           gain.gain.setValueAtTime(0.0001, now + 0.15);
-
           osc.connect(gain);
           gain.connect(this.ctx.destination);
-
           osc.start(now);
           osc.stop(now + 0.18);
         } catch (e) {}
@@ -811,17 +804,17 @@
       const container = document.getElementById('toastContainer');
       const toast = document.createElement('div');
       
-      let bgStyle = 'bg-slate-800 border-slate-700 text-slate-200';
+      let bgStyle = 'bg-slate-800 text-slate-100 border-slate-700';
       let icon = '<i class="fa-solid fa-circle-info text-blue-400"></i>';
 
       if (type === 'success') {
-        bgStyle = 'bg-emerald-950/90 border-emerald-500/60 text-emerald-200 shadow-emerald-900/40';
+        bgStyle = 'bg-emerald-950/95 text-emerald-200 border-emerald-500/60 shadow-emerald-900/40';
         icon = '<i class="fa-solid fa-circle-check text-emerald-400"></i>';
       } else if (type === 'warning') {
-        bgStyle = 'bg-amber-950/90 border-amber-500/60 text-amber-200 shadow-amber-900/40';
+        bgStyle = 'bg-amber-950/95 text-amber-200 border-amber-500/60 shadow-amber-900/40';
         icon = '<i class="fa-solid fa-triangle-exclamation text-amber-400"></i>';
       } else if (type === 'error') {
-        bgStyle = 'bg-rose-950/90 border-rose-500/60 text-rose-200 shadow-rose-900/40';
+        bgStyle = 'bg-rose-950/95 text-rose-200 border-rose-500/60 shadow-rose-900/40';
         icon = '<i class="fa-solid fa-circle-xmark text-rose-400"></i>';
       }
 
@@ -841,25 +834,31 @@
     }
 
     // ==========================================
-    // 3. APPLICATION STATE & WEBRTC CONTROLLER
+    // 3. MAIN APPLICATION & WEBRTC CONTROLLER
     // ==========================================
-    class P2PApp {
+    class KurakaniApp {
       constructor() {
         this.currentState = STATES.IDLE;
-        this.my6DigitId = this.generate6DigitId();
-        this.myPeerId = APP_CONFIG.PEER_PREFIX + this.my6DigitId;
-
-        this.peer = null;
-        this.currentCall = null;
-        this.currentDataConn = null;
         
+        // 1. Persistent 15-Digit Device ID
+        this.my15DigitId = this.getOrCreateDeviceId();
+
+        // Socket.io & WebRTC instances
+        this.socket = null;
+        this.pc = null;
+        this.targetPeerId = null;
+        this.incomingOffer = null;
+        this.iceCandidateQueue = [];
+
+        // Media Streams
         this.localStream = null;
         this.idlePreviewStream = null;
         this.remoteStream = null;
 
+        // Dial state
         this.dialedDigits = '';
-        this.callType = 'video'; // 'video' | 'voice'
-        this.currentFacingMode = 'user'; // 'user' | 'environment'
+        this.callType = 'video';
+        this.currentFacingMode = 'user';
         
         this.isMicMuted = false;
         this.isCameraOff = false;
@@ -870,22 +869,40 @@
         this.outgoingCallTimeout = null;
 
         this.initDOMElements();
+        this.initTheme();
         this.bindEvents();
-        this.initPeer();
+        this.initSocket();
         this.checkUrlForDial();
         this.setupPwaInstall();
       }
 
-      // Generate random 6-digit numeric ID (e.g. 784291)
-      generate6DigitId() {
-        return Math.floor(100000 + Math.random() * 900000).toString();
+      // Persistent 15-Digit Device ID in localStorage
+      getOrCreateDeviceId() {
+        let deviceId = localStorage.getItem('kurakani_device_id');
+        if (!deviceId || !/^\d{15}$/.test(deviceId)) {
+          deviceId = Array.from({ length: 15 }, () => Math.floor(Math.random() * 10)).join('');
+          localStorage.setItem('kurakani_device_id', deviceId);
+        }
+        return deviceId;
       }
 
-      format6Digit(raw) {
-        if (!raw) return '--- ---';
-        const clean = raw.replace(/\D/g, '');
-        if (clean.length <= 3) return clean;
-        return `${clean.slice(0, 3)}-${clean.slice(3, 6)}`;
+      regenerateDeviceId() {
+        const newId = Array.from({ length: 15 }, () => Math.floor(Math.random() * 10)).join('');
+        localStorage.setItem('kurakani_device_id', newId);
+        this.my15DigitId = newId;
+        this.updateIdDisplay();
+        if (this.socket && this.socket.connected) {
+          this.socket.emit('register', { deviceId: this.my15DigitId });
+        }
+        showToast('Generated new persistent 15-digit ID', 'info');
+      }
+
+      // Format 15 digits into groups of 3 (e.g. 123-456-789-012-345)
+      format15Digit(raw) {
+        if (!raw) return '--- --- --- --- ---';
+        const clean = String(raw).replace(/\D/g, '').slice(0, 15);
+        if (!clean) return '--- --- --- --- ---';
+        return clean.match(/.{1,3}/g)?.join('-') || clean;
       }
 
       initDOMElements() {
@@ -903,6 +920,8 @@
         this.dialPlaceholder = document.getElementById('dialPlaceholder');
 
         // Buttons
+        this.btnThemeToggle = document.getElementById('btnThemeToggle');
+        this.themeToggleIcon = document.getElementById('themeToggleIcon');
         this.btnCopyId = document.getElementById('btnCopyId');
         this.btnShareId = document.getElementById('btnShareId');
         this.btnRefreshId = document.getElementById('btnRefreshId');
@@ -955,68 +974,129 @@
       }
 
       updateIdDisplay() {
-        this.myPhoneIdDisplay.textContent = this.format6Digit(this.my6DigitId);
+        this.myPhoneIdDisplay.textContent = this.format15Digit(this.my15DigitId);
       }
 
       // ==========================================
-      // PEERJS SIGNALING INITIALIZATION
+      // LIGHT / DARK MODE TOGGLE & PERSISTENCE
       // ==========================================
-      initPeer() {
+      initTheme() {
+        const savedTheme = localStorage.getItem('kurakani_theme');
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = savedTheme || (prefersDark ? 'dark' : 'light');
+        this.applyTheme(theme);
+      }
+
+      applyTheme(theme) {
+        if (theme === 'dark') {
+          document.documentElement.classList.add('dark');
+          localStorage.setItem('kurakani_theme', 'dark');
+          this.themeToggleIcon.className = 'fa-solid fa-sun text-xs text-amber-400';
+          this.btnThemeToggle.title = 'Switch to Light Mode';
+        } else {
+          document.documentElement.classList.remove('dark');
+          localStorage.setItem('kurakani_theme', 'light');
+          this.themeToggleIcon.className = 'fa-solid fa-moon text-xs text-slate-700';
+          this.btnThemeToggle.title = 'Switch to Dark Mode';
+        }
+      }
+
+      toggleTheme() {
+        const isDark = document.documentElement.classList.contains('dark');
+        const next = isDark ? 'light' : 'dark';
+        this.applyTheme(next);
+        showToast(`Theme switched to ${next} mode`, 'info');
+      }
+
+      // ==========================================
+      // SOCKET.IO SIGNALING CLIENT
+      // ==========================================
+      initSocket() {
         this.setPeerStatus('connecting', 'Connecting...');
 
-        if (this.peer) {
-          try { this.peer.destroy(); } catch (e) {}
-        }
+        // Dynamically connects to current host origin or configured URL
+        const SOCKET_SERVER_URL = window.ENV_SOCKET_URL || window.location.origin;
 
         try {
-          this.peer = new Peer(this.myPeerId, {
-            debug: 1,
-            config: {
-              iceServers: APP_CONFIG.ICE_SERVERS,
-              sdpSemantics: 'unified-plan'
-            }
+          this.socket = io(SOCKET_SERVER_URL, {
+            transports: ['websocket', 'polling'],
+            reconnectionAttempts: 10,
+            reconnectionDelay: 1000
           });
 
-          this.peer.on('open', (id) => {
-            console.log('PeerJS online with ID:', id);
+          this.socket.on('connect', () => {
+            console.log('[Socket] Connected to signaling server with socket ID:', this.socket.id);
+            // Register persistent 15-digit Device ID
+            this.socket.emit('register', { deviceId: this.my15DigitId });
+          });
+
+          this.socket.on('registered', ({ deviceId }) => {
+            console.log('[Socket] Registered persistent device ID:', deviceId);
             this.setPeerStatus('ready', 'Online');
           });
 
-          // Incoming Media Call Handler
-          this.peer.on('call', (incomingCall) => {
-            this.handleIncomingCall(incomingCall);
+          // Incoming Call Offer
+          this.socket.on('incoming-call', ({ callerId, callType, offer }) => {
+            this.handleIncomingCall(callerId, callType, offer);
           });
 
-          // Incoming Data Connection Handler (for instant signaling)
-          this.peer.on('connection', (conn) => {
-            this.setupDataConnection(conn);
+          // Call Answered by Callee
+          this.socket.on('call-answered', async ({ responderId, answer }) => {
+            await this.handleCallAnswered(responderId, answer);
           });
 
-          // Error Handler & ID Collision Resolution
-          this.peer.on('error', (err) => {
-            console.warn('PeerJS error:', err.type, err.message);
-            if (err.type === 'unavailable-id') {
-              // ID taken: generate a new random 6-digit ID and reconnect seamlessly
-              this.my6DigitId = this.generate6DigitId();
-              this.myPeerId = APP_CONFIG.PEER_PREFIX + this.my6DigitId;
-              this.updateIdDisplay();
-              setTimeout(() => this.initPeer(), 500);
-            } else if (err.type === 'peer-unavailable') {
-              showToast('Target Phone ID is not online.', 'error');
-              soundSynth.playBusy();
-              this.terminateCall('unavailable');
+          // Relay ICE Candidate
+          this.socket.on('ice-candidate', async ({ candidate }) => {
+            await this.addRemoteCandidate(candidate);
+          });
+
+          // Call Declined
+          this.socket.on('call-declined', () => {
+            showToast('Call was declined by target user.', 'warning');
+            soundSynth.playBusy();
+            this.terminateCall('declined');
+          });
+
+          // Call Busy
+          this.socket.on('call-busy', () => {
+            showToast('Target device is currently on another call.', 'warning');
+            soundSynth.playBusy();
+            this.terminateCall('busy');
+          });
+
+          // Call Ended by Remote Peer
+          this.socket.on('call-ended', () => {
+            showToast('Call ended by remote peer.', 'info');
+            soundSynth.playEnded();
+            this.terminateCall('remote_ended');
+          });
+
+          // Mid-Call Track Toggle State
+          this.socket.on('track-toggle', ({ video }) => {
+            if (video === false) {
+              this.remoteAudioFallback.classList.remove('hidden');
             } else {
-              this.setPeerStatus('error', 'Reconnecting...');
+              this.remoteAudioFallback.classList.add('hidden');
             }
           });
 
-          this.peer.on('disconnected', () => {
+          // Signaling Error / Target Offline
+          this.socket.on('call-error', ({ message }) => {
+            showToast(message || 'Target device unreachable.', 'error');
+            soundSynth.playBusy();
+            this.terminateCall('error');
+          });
+
+          this.socket.on('disconnect', () => {
             this.setPeerStatus('connecting', 'Reconnecting...');
-            try { this.peer.reconnect(); } catch (e) {}
+          });
+
+          this.socket.on('connect_error', () => {
+            this.setPeerStatus('error', 'Signaling Error');
           });
 
         } catch (e) {
-          console.error('PeerJS init failed:', e);
+          console.error('[Socket] Initialization error:', e);
           this.setPeerStatus('error', 'Signaling Error');
         }
       }
@@ -1033,50 +1113,77 @@
       }
 
       // ==========================================
-      // DATA CONNECTION SIGNALING (INSTANT CONTROL)
+      // WEBRTC PEER CONNECTION CREATION
       // ==========================================
-      setupDataConnection(conn) {
-        this.currentDataConn = conn;
+      createPeerConnection() {
+        if (this.pc) {
+          try { this.pc.close(); } catch (e) {}
+          this.pc = null;
+        }
 
-        conn.on('data', (data) => {
-          if (!data || !data.type) return;
+        this.iceCandidateQueue = [];
+        this.pc = new RTCPeerConnection(RTC_CONFIG);
 
-          switch (data.type) {
-            case 'CALL_DECLINED':
-              showToast('Call declined by user.', 'warning');
-              soundSynth.playBusy();
-              this.terminateCall('declined');
-              break;
-
-            case 'CALL_BUSY':
-              showToast('Target user is currently on another call.', 'warning');
-              soundSynth.playBusy();
-              this.terminateCall('busy');
-              break;
-
-            case 'CALL_ENDED':
-              showToast('Call ended by remote peer.', 'info');
-              soundSynth.playEnded();
-              this.terminateCall('remote_ended');
-              break;
-
-            case 'TRACK_STATE':
-              // Sync remote mute/camera state
-              if (data.video === false) {
-                this.remoteAudioFallback.classList.remove('hidden');
-              } else {
-                this.remoteAudioFallback.classList.add('hidden');
-              }
-              break;
+        // Send local ICE candidates to remote target via Socket.io
+        this.pc.onicecandidate = (event) => {
+          if (event.candidate && this.targetPeerId) {
+            this.socket.emit('ice-candidate', {
+              targetId: this.targetPeerId,
+              candidate: event.candidate
+            });
           }
-        });
+        };
+
+        // Attach remote tracks when received
+        this.pc.ontrack = (event) => {
+          if (event.streams && event.streams[0]) {
+            this.remoteStream = event.streams[0];
+            this.remoteVideo.srcObject = this.remoteStream;
+            if (this.remoteAudio) this.remoteAudio.srcObject = this.remoteStream;
+
+            const hasVideo = this.remoteStream.getVideoTracks().length > 0 && this.remoteStream.getVideoTracks()[0].enabled;
+            if (!hasVideo || this.callType === 'voice') {
+              this.remoteAudioFallback.classList.remove('hidden');
+            } else {
+              this.remoteAudioFallback.classList.add('hidden');
+            }
+          }
+        };
+
+        // Monitor connection state
+        this.pc.onconnectionstatechange = () => {
+          console.log('[WebRTC] Connection state:', this.pc.connectionState);
+          if (['disconnected', 'failed', 'closed'].includes(this.pc.connectionState)) {
+            if (this.currentState === STATES.INCALL) {
+              this.terminateCall('disconnected');
+            }
+          }
+        };
+
+        return this.pc;
       }
 
-      sendSignal(type, payload = {}) {
-        if (this.currentDataConn && this.currentDataConn.open) {
+      async addRemoteCandidate(candidate) {
+        if (!candidate) return;
+        if (this.pc && this.pc.remoteDescription && this.pc.remoteDescription.type) {
           try {
-            this.currentDataConn.send({ type, ...payload });
-          } catch (e) {}
+            await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+          } catch (e) {
+            console.warn('[WebRTC] Error adding candidate:', e);
+          }
+        } else {
+          this.iceCandidateQueue.push(candidate);
+        }
+      }
+
+      async flushIceCandidateQueue() {
+        while (this.iceCandidateQueue.length > 0) {
+          const c = this.iceCandidateQueue.shift();
+          try {
+            await this.pc.addIceCandidate(new RTCIceCandidate(c));
+          } catch (e) {
+            console.warn('[WebRTC] Error flushing candidate:', e);
+          }
         }
       }
 
@@ -1116,7 +1223,7 @@
           this.btnIdleToggleCamIcon.className = 'fa-solid fa-eye-slash text-indigo-400';
           this.idleCameraBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span>LIVE PREVIEW</span>';
         } catch (e) {
-          console.warn('Camera preview permission denied or unavailable:', e);
+          console.warn('Camera preview permission denied:', e);
           showToast('Camera access paused or denied.', 'warning');
           this.stopIdleCameraPreview();
         }
@@ -1144,7 +1251,7 @@
           await this.startIdleCameraPreview();
           showToast(`Camera flipped to ${this.currentFacingMode === 'user' ? 'Front' : 'Back'}`, 'info');
         } else if (this.currentState === STATES.INCALL && this.localStream) {
-          // Mid-call camera switch using RTCRtpSender.replaceTrack
+          // Mid-call camera switch via RTCRtpSender.replaceTrack
           try {
             const newStream = await navigator.mediaDevices.getUserMedia({
               audio: false,
@@ -1154,8 +1261,8 @@
             const newVideoTrack = newStream.getVideoTracks()[0];
             const oldVideoTrack = this.localStream.getVideoTracks()[0];
 
-            if (this.currentCall && this.currentCall.peerConnection) {
-              const senders = this.currentCall.peerConnection.getSenders();
+            if (this.pc) {
+              const senders = this.pc.getSenders();
               const videoSender = senders.find(s => s.track && s.track.kind === 'video');
               if (videoSender) {
                 await videoSender.replaceTrack(newVideoTrack);
@@ -1175,7 +1282,7 @@
       }
 
       // ==========================================
-      // DIALPAD LOGIC & FORMATTING
+      // DIALPAD LOGIC & 15-DIGIT FORMATTING
       // ==========================================
       appendDigit(digit) {
         soundSynth.initCtx();
@@ -1185,7 +1292,7 @@
           navigator.vibrate(12);
         }
 
-        if (this.dialedDigits.length < 6) {
+        if (this.dialedDigits.length < 15) {
           this.dialedDigits += digit;
           this.updateDialDisplay();
         }
@@ -1210,7 +1317,7 @@
           this.dialPlaceholder.classList.remove('hidden');
         } else {
           this.dialPlaceholder.classList.add('hidden');
-          this.dialedNumberDisplay.textContent = this.format6Digit(this.dialedDigits);
+          this.dialedNumberDisplay.textContent = this.format15Digit(this.dialedDigits);
         }
       }
 
@@ -1221,24 +1328,23 @@
         soundSynth.initCtx();
 
         const cleanDigits = this.dialedDigits.replace(/\D/g, '');
-        if (cleanDigits.length !== 6) {
-          showToast('Please dial a valid 6-digit Phone ID.', 'warning');
+        if (cleanDigits.length !== 15) {
+          showToast('Please dial a valid 15-digit Device ID.', 'warning');
           return;
         }
 
-        if (cleanDigits === this.my6DigitId) {
-          showToast('You cannot call your own Phone ID!', 'warning');
+        if (cleanDigits === this.my15DigitId) {
+          showToast('You cannot call your own Device ID!', 'warning');
           return;
         }
 
         this.callType = type;
-        const targetPeerId = APP_CONFIG.PEER_PREFIX + cleanDigits;
+        this.targetPeerId = cleanDigits;
 
-        // Stop idle preview stream to free hardware devices
+        // Free idle preview camera
         this.stopIdleCameraPreview();
 
         try {
-          // Request local media stream based on call type
           const mediaConstraints = {
             audio: {
               echoCancellation: true,
@@ -1256,55 +1362,50 @@
           this.isMicMuted = false;
           this.isCameraOff = (type === 'voice');
 
+          // Initialize WebRTC Peer Connection
+          const pc = this.createPeerConnection();
+
+          // Add local media tracks to PeerConnection
+          this.localStream.getTracks().forEach(track => {
+            pc.addTrack(track, this.localStream);
+          });
+
           // Transition to OUTGOING State
           this.transitionState(STATES.OUTGOING);
-          this.outgoingTargetId.textContent = this.format6Digit(cleanDigits);
+          this.outgoingTargetId.textContent = this.format15Digit(cleanDigits);
           this.outgoingCallTypeBadge.textContent = type === 'video' ? 'HD Video Call' : 'Encrypted Voice Call';
           this.outgoingAvatarIcon.className = type === 'video' ? 'fa-solid fa-video text-xl' : 'fa-solid fa-phone text-xl';
-          this.outgoingStatusSubtext.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span> Calling peer...';
+          this.outgoingStatusSubtext.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span> Ringing remote peer...';
 
           // Start synthetic ringback tone
           soundSynth.startRingback();
 
-          // Establish signaling data connection
-          const conn = this.peer.connect(targetPeerId);
-          this.setupDataConnection(conn);
+          // Create SDP Offer
+          const offer = await pc.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: (type === 'video')
+          });
+          await pc.setLocalDescription(offer);
 
-          // Initiate PeerJS WebRTC Call
-          const call = this.peer.call(targetPeerId, this.localStream, {
-            metadata: {
-              callerId: this.my6DigitId,
-              type: type
-            }
+          // Emit call offer to server
+          this.socket.emit('call-user', {
+            targetId: this.targetPeerId,
+            callerId: this.my15DigitId,
+            callType: type,
+            offer: offer
           });
 
-          this.currentCall = call;
-
-          call.on('stream', (remoteStream) => {
-            // Call answered! Transition to IN-CALL state
-            this.handleCallConnected(remoteStream, cleanDigits);
-          });
-
-          call.on('close', () => {
-            this.terminateCall('closed');
-          });
-
-          call.on('error', (err) => {
-            console.warn('Outgoing call error:', err);
-            this.terminateCall('error');
-          });
-
-          // 45-Second timeout for unanswered calls
+          // 45-second timeout for unanswered calls
           this.outgoingCallTimeout = setTimeout(() => {
             if (this.currentState === STATES.OUTGOING) {
-              showToast('No answer from target peer.', 'warning');
+              showToast('No answer from target device.', 'warning');
               soundSynth.playBusy();
               this.terminateCall('timeout');
             }
           }, 45000);
 
         } catch (err) {
-          console.error('Failed to acquire media stream:', err);
+          console.error('[Call] Media or offer error:', err);
           showToast('Camera/Microphone permission denied.', 'error');
           this.terminateCall('permission_denied');
         }
@@ -1313,32 +1414,26 @@
       // ==========================================
       // CALL LIFECYCLE: 2. INCOMING CALL
       // ==========================================
-      handleIncomingCall(incomingCall) {
+      handleIncomingCall(callerId, callType, offer) {
         soundSynth.initCtx();
 
-        // If already in a call, automatically respond BUSY
+        // If already busy on another call, emit busy
         if (this.currentState !== STATES.IDLE) {
-          const busyConn = this.peer.connect(incomingCall.peer);
-          busyConn.on('open', () => {
-            busyConn.send({ type: 'CALL_BUSY' });
-            busyConn.close();
-          });
+          this.socket.emit('call-busy', { targetId: callerId });
           return;
         }
 
-        this.currentCall = incomingCall;
-        const meta = incomingCall.metadata || {};
-        const rawCallerId = meta.callerId || incomingCall.peer.replace(APP_CONFIG.PEER_PREFIX, '');
-        const callType = meta.type || 'video';
+        this.targetPeerId = callerId;
+        this.callType = callType || 'video';
+        this.incomingOffer = offer;
 
-        this.callType = callType;
         this.stopIdleCameraPreview();
 
         // Transition to INCOMING State
         this.transitionState(STATES.INCOMING);
-        this.incomingCallerId.textContent = this.format6Digit(rawCallerId);
-        this.incomingCallTypeBadge.textContent = callType === 'video' ? 'HD Video Call' : 'Encrypted Voice Call';
-        this.incomingAvatarIcon.className = callType === 'video' ? 'fa-solid fa-video text-2xl' : 'fa-solid fa-phone text-2xl';
+        this.incomingCallerId.textContent = this.format15Digit(callerId);
+        this.incomingCallTypeBadge.textContent = this.callType === 'video' ? 'HD Video Call' : 'Encrypted Voice Call';
+        this.incomingAvatarIcon.className = this.callType === 'video' ? 'fa-solid fa-video text-2xl' : 'fa-solid fa-phone text-2xl';
 
         // Start synthetic ringtone
         soundSynth.startRingtone();
@@ -1346,9 +1441,7 @@
 
       async acceptIncomingCall() {
         soundSynth.stopRingtone();
-        if (!this.currentCall) return;
-
-        const callerId = this.currentCall.peer.replace(APP_CONFIG.PEER_PREFIX, '');
+        if (!this.targetPeerId || !this.incomingOffer) return;
 
         try {
           const mediaConstraints = {
@@ -1368,24 +1461,34 @@
           this.isMicMuted = false;
           this.isCameraOff = (this.callType === 'voice');
 
-          // Answer call with local stream
-          this.currentCall.answer(this.localStream);
+          // Initialize WebRTC Peer Connection
+          const pc = this.createPeerConnection();
 
-          this.currentCall.on('stream', (remoteStream) => {
-            this.handleCallConnected(remoteStream, callerId);
+          // Add local media tracks
+          this.localStream.getTracks().forEach(track => {
+            pc.addTrack(track, this.localStream);
           });
 
-          this.currentCall.on('close', () => {
-            this.terminateCall('closed');
+          // Set Remote Description (Caller's Offer)
+          await pc.setRemoteDescription(new RTCSessionDescription(this.incomingOffer));
+          await this.flushIceCandidateQueue();
+
+          // Create and set Local Description (Answer)
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+
+          // Emit answer back to caller
+          this.socket.emit('answer-call', {
+            targetId: this.targetPeerId,
+            responderId: this.my15DigitId,
+            answer: answer
           });
 
-          this.currentCall.on('error', (err) => {
-            console.warn('Call stream error:', err);
-            this.terminateCall('error');
-          });
+          // Transition to In-Call state
+          this.handleCallConnected(this.targetPeerId);
 
         } catch (err) {
-          console.error('Accept media error:', err);
+          console.error('[Call] Error accepting call:', err);
           showToast('Failed to access camera/microphone.', 'error');
           this.declineIncomingCall();
         }
@@ -1393,21 +1496,27 @@
 
       declineIncomingCall() {
         soundSynth.stopRingtone();
-        
-        if (this.currentCall) {
-          // Send decline signaling
-          this.sendSignal('CALL_DECLINED');
-          try { this.currentCall.close(); } catch (e) {}
-          this.currentCall = null;
+        if (this.targetPeerId) {
+          this.socket.emit('call-declined', { targetId: this.targetPeerId });
         }
-
-        this.transitionState(STATES.IDLE);
+        this.terminateCall('declined');
       }
 
       // ==========================================
       // CALL LIFECYCLE: 3. IN-CALL STATE
       // ==========================================
-      handleCallConnected(remoteStream, remotePeerIdClean) {
+      async handleCallAnswered(responderId, answer) {
+        if (!this.pc) return;
+        try {
+          await this.pc.setRemoteDescription(new RTCSessionDescription(answer));
+          await this.flushIceCandidateQueue();
+          this.handleCallConnected(responderId);
+        } catch (e) {
+          console.error('[WebRTC] Set remote answer error:', e);
+        }
+      }
+
+      handleCallConnected(remoteId) {
         soundSynth.stopRingback();
         soundSynth.stopRingtone();
         soundSynth.playConnected();
@@ -1417,26 +1526,15 @@
           this.outgoingCallTimeout = null;
         }
 
-        this.remoteStream = remoteStream;
         this.transitionState(STATES.INCALL);
 
-        // Attach streams to video and audio elements
-        this.remoteVideo.srcObject = remoteStream;
-        if (this.remoteAudio) this.remoteAudio.srcObject = remoteStream;
+        // Attach local stream to PiP preview
         this.localVideo.srcObject = this.localStream;
 
-        // Remote info badges
-        const formattedRemoteId = this.format6Digit(remotePeerIdClean);
+        // Remote ID formatting
+        const formattedRemoteId = this.format15Digit(remoteId);
         this.inCallRemoteIdBadge.textContent = formattedRemoteId;
         this.inCallRemoteIdAudio.textContent = formattedRemoteId;
-
-        // Determine if remote video exists
-        const remoteHasVideo = remoteStream.getVideoTracks().length > 0 && remoteStream.getVideoTracks()[0].enabled;
-        if (!remoteHasVideo || this.callType === 'voice') {
-          this.remoteAudioFallback.classList.remove('hidden');
-        } else {
-          this.remoteAudioFallback.classList.add('hidden');
-        }
 
         // Setup local camera placeholder if voice call
         if (this.callType === 'voice') {
@@ -1447,7 +1545,6 @@
           this.btnToggleCamIcon.className = 'fa-solid fa-video text-slate-100';
         }
 
-        // Reset and start duration timer
         this.startCallDurationTimer();
       }
 
@@ -1489,6 +1586,14 @@
           this.btnToggleMicIcon.className = 'fa-solid fa-microphone text-base';
           showToast('Microphone Active', 'info');
         }
+
+        if (this.targetPeerId && this.socket) {
+          this.socket.emit('track-toggle', {
+            targetId: this.targetPeerId,
+            audio: !this.isMicMuted,
+            video: !this.isCameraOff
+          });
+        }
       }
 
       async toggleCam() {
@@ -1497,7 +1602,7 @@
 
         let videoTracks = this.localStream.getVideoTracks();
 
-        // If audio-only call without video track, dynamically acquire video
+        // If audio-only call, dynamically acquire camera track
         if (videoTracks.length === 0) {
           try {
             const camStream = await navigator.mediaDevices.getUserMedia({
@@ -1506,8 +1611,8 @@
             const newTrack = camStream.getVideoTracks()[0];
             this.localStream.addTrack(newTrack);
 
-            if (this.currentCall && this.currentCall.peerConnection) {
-              this.currentCall.peerConnection.addTrack(newTrack, this.localStream);
+            if (this.pc) {
+              this.pc.addTrack(newTrack, this.localStream);
             }
 
             this.localVideo.srcObject = this.localStream;
@@ -1515,7 +1620,10 @@
             this.localCamOffOverlay.classList.add('hidden');
             this.btnToggleCam.className = 'w-12 h-12 rounded-full bg-slate-800 text-slate-100 border border-slate-700 flex items-center justify-center active:scale-90 transition';
             this.btnToggleCamIcon.className = 'fa-solid fa-video text-base';
-            this.sendSignal('TRACK_STATE', { video: true });
+            
+            if (this.targetPeerId && this.socket) {
+              this.socket.emit('track-toggle', { targetId: this.targetPeerId, video: true, audio: !this.isMicMuted });
+            }
             showToast('Camera Enabled', 'info');
             return;
           } catch (err) {
@@ -1534,14 +1642,20 @@
           this.localCamOffOverlay.classList.remove('hidden');
           this.btnToggleCam.className = 'w-12 h-12 rounded-full bg-rose-600/30 text-rose-400 border border-rose-500/50 flex items-center justify-center active:scale-90 transition';
           this.btnToggleCamIcon.className = 'fa-solid fa-video-slash text-base';
-          this.sendSignal('TRACK_STATE', { video: false });
           showToast('Camera Turned Off', 'info');
         } else {
           this.localCamOffOverlay.classList.add('hidden');
           this.btnToggleCam.className = 'w-12 h-12 rounded-full bg-slate-800 text-slate-100 border border-slate-700 flex items-center justify-center active:scale-90 transition';
           this.btnToggleCamIcon.className = 'fa-solid fa-video text-base';
-          this.sendSignal('TRACK_STATE', { video: true });
           showToast('Camera Active', 'info');
+        }
+
+        if (this.targetPeerId && this.socket) {
+          this.socket.emit('track-toggle', {
+            targetId: this.targetPeerId,
+            video: !this.isCameraOff,
+            audio: !this.isMicMuted
+          });
         }
       }
 
@@ -1572,21 +1686,18 @@
           this.callDurationInterval = null;
         }
 
-        // Notify remote peer of hangup
-        this.sendSignal('CALL_ENDED');
-
-        // Close peer connections
-        if (this.currentCall) {
-          try { this.currentCall.close(); } catch (e) {}
-          this.currentCall = null;
+        // Notify remote peer
+        if (this.targetPeerId && this.socket && reason !== 'remote_ended') {
+          this.socket.emit('call-ended', { targetId: this.targetPeerId });
         }
 
-        if (this.currentDataConn) {
-          try { this.currentDataConn.close(); } catch (e) {}
-          this.currentDataConn = null;
+        // Close PeerConnection
+        if (this.pc) {
+          try { this.pc.close(); } catch (e) {}
+          this.pc = null;
         }
 
-        // Release hardware camera/mic streams
+        // Release hardware media tracks
         if (this.localStream) {
           this.localStream.getTracks().forEach(t => t.stop());
           this.localStream = null;
@@ -1600,6 +1711,10 @@
         if (this.remoteAudio) this.remoteAudio.srcObject = null;
         this.localVideo.srcObject = null;
 
+        this.targetPeerId = null;
+        this.incomingOffer = null;
+        this.iceCandidateQueue = [];
+
         if (this.currentState === STATES.INCALL) {
           soundSynth.playEnded();
         }
@@ -1607,11 +1722,10 @@
         this.transitionState(STATES.IDLE);
       }
 
-      // Transition Central State Machine
+      // State Machine Transitions
       transitionState(nextState) {
         this.currentState = nextState;
 
-        // Hide all screens
         this.screenIdle.classList.add('hidden');
         this.screenOutgoing.classList.add('hidden');
         this.screenIncoming.classList.add('hidden');
@@ -1641,11 +1755,11 @@
           const params = new URLSearchParams(window.location.search);
           const dialParam = params.get('dial');
           if (dialParam) {
-            const clean = dialParam.replace(/\D/g, '').slice(0, 6);
+            const clean = dialParam.replace(/\D/g, '').slice(0, 15);
             if (clean.length > 0) {
               this.dialedDigits = clean;
               this.updateDialDisplay();
-              showToast(`Pre-filled target Phone ID: ${this.format6Digit(clean)}`, 'info');
+              showToast(`Pre-filled target ID: ${this.format15Digit(clean)}`, 'info');
             }
           }
         } catch (e) {}
@@ -1675,28 +1789,31 @@
       // EVENT BINDINGS
       // ==========================================
       bindEvents() {
-        // Unlock Web Audio API on first user interaction
+        // Unlock Web Audio API on first interaction
         window.addEventListener('click', () => soundSynth.initCtx(), { once: true });
         window.addEventListener('touchstart', () => soundSynth.initCtx(), { once: true });
 
-        // Copy Phone ID Button
+        // Theme Toggle Button
+        this.btnThemeToggle.addEventListener('click', () => this.toggleTheme());
+
+        // Copy 15-Digit Device ID
         this.btnCopyId.addEventListener('click', () => {
           soundSynth.initCtx();
-          navigator.clipboard.writeText(this.format6Digit(this.my6DigitId)).then(() => {
-            showToast('Phone ID copied to clipboard!', 'success');
+          navigator.clipboard.writeText(this.my15DigitId).then(() => {
+            showToast('15-digit Device ID copied to clipboard!', 'success');
           }).catch(() => {
-            showToast(`Your ID: ${this.format6Digit(this.my6DigitId)}`, 'info');
+            showToast(`Device ID: ${this.my15DigitId}`, 'info');
           });
         });
 
-        // Share Direct Dial Link Button
+        // Share Direct Dial Link
         this.btnShareId.addEventListener('click', () => {
           soundSynth.initCtx();
-          const shareUrl = `${window.location.origin}${window.location.pathname}?dial=${this.my6DigitId}`;
+          const shareUrl = `${window.location.origin}/?dial=${this.my15DigitId}`;
           if (navigator.share) {
             navigator.share({
               title: 'Kurakani P2P Call',
-              text: `Call me on Kurakani using Phone ID: ${this.format6Digit(this.my6DigitId)}`,
+              text: `Call me on Kurakani using Device ID: ${this.format15Digit(this.my15DigitId)}`,
               url: shareUrl
             }).catch(() => {});
           } else {
@@ -1706,15 +1823,11 @@
           }
         });
 
-        // Refresh Ephemeral Phone ID Button
+        // Regenerate 15-Digit Device ID
         this.btnRefreshId.addEventListener('click', () => {
           soundSynth.initCtx();
           if (this.currentState !== STATES.IDLE) return;
-          this.my6DigitId = this.generate6DigitId();
-          this.myPeerId = APP_CONFIG.PEER_PREFIX + this.my6DigitId;
-          this.updateIdDisplay();
-          this.initPeer();
-          showToast(`Assigned new Phone ID: ${this.format6Digit(this.my6DigitId)}`, 'info');
+          this.regenerateDeviceId();
         });
 
         // Idle Camera Preview Controls
@@ -1774,12 +1887,12 @@
           if (this.currentState !== STATES.IDLE) return;
           const pasted = (e.clipboardData || window.clipboardData)?.getData('text');
           if (pasted) {
-            const clean = pasted.replace(/\D/g, '').slice(0, 6);
+            const clean = pasted.replace(/\D/g, '').slice(0, 15);
             if (clean.length > 0) {
               soundSynth.initCtx();
               this.dialedDigits = clean;
               this.updateDialDisplay();
-              showToast(`Pasted Phone ID: ${this.format6Digit(clean)}`, 'info');
+              showToast(`Pasted Device ID: ${this.format15Digit(clean)}`, 'info');
             }
           }
         });
@@ -1809,13 +1922,15 @@
 
     // Initialize App when DOM is loaded
     document.addEventListener('DOMContentLoaded', () => {
-      window.app = new P2PApp();
+      window.app = new KurakaniApp();
 
-      // Register Service Worker for PWA
+      // Register Service Worker for PWA installability
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('./sw.js')
-          .then((reg) => console.log('PWA Service Worker registered:', reg.scope))
-          .catch((err) => console.warn('PWA Service Worker registration failed:', err));
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then((reg) => console.log('PWA Service Worker registered:', reg.scope))
+            .catch((err) => console.warn('PWA Service Worker registration failed:', err));
+        });
       }
     });
   </script>

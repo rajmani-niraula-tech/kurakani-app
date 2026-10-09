@@ -1,11 +1,11 @@
-const CACHE_NAME = 'p2p-call-v1';
+const CACHE_NAME = 'kurakani-pwa-v2';
 const ASSETS_TO_CACHE = [
-  './',
-  './index.html',
-  './manifest.json',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
-  './icons/icon.svg'
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/icon.svg'
 ];
 
 self.addEventListener('install', (event) => {
@@ -27,12 +27,16 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Only handle GET requests for same origin or static assets
+  // Only handle GET requests
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
 
-  // Bypass signaling server requests, peerjs, and stun servers
-  if (url.hostname.includes('peerjs') || url.protocol === 'ws:' || url.protocol === 'wss:') {
+  // Bypass socket.io requests, signaling web sockets, and stun/turn traffic
+  if (
+    url.pathname.startsWith('/socket.io') ||
+    url.protocol === 'ws:' ||
+    url.protocol === 'wss:'
+  ) {
     return;
   }
 
@@ -47,6 +51,7 @@ self.addEventListener('fetch', (event) => {
         }).catch(() => {/* Offline fallback */});
         return cachedResponse;
       }
+
       return fetch(event.request).then((networkResponse) => {
         if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
           return networkResponse;
@@ -59,7 +64,7 @@ self.addEventListener('fetch', (event) => {
       }).catch(() => {
         // Fallback to cached index.html for navigation requests
         if (event.request.mode === 'navigate') {
-          return caches.match('./index.html');
+          return caches.match('/');
         }
       });
     })
