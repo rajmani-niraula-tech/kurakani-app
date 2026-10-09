@@ -1,0 +1,20 @@
+{
+  "name": "kurakani-p2p-call",
+  "version": "1.0.0",
+  "description": "Production-ready Progressive Web App for direct Peer-to-Peer Voice and Video Calling with zero database requirements.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "pwa",
+    "webrtc",
+    "peerjs",
+    "voice-call",
+    "video-call",
+    "p2p",
+    "ephemeral"
+  ],
+  "author": "",
+  "license": "MIT"
+}
