@@ -463,9 +463,8 @@
       
       <!-- FULL-BLEED REMOTE STREAM AREA -->
       <div class="absolute inset-0 w-full h-full bg-slate-950 flex items-center justify-center overflow-hidden">
-        <!-- Remote Video & Dedicated Audio Stream -->
-        <video id="remoteVideo" autoplay playsinline class="w-full h-full object-cover"></video>
-        <audio id="remoteAudio" autoplay playsinline class="hidden"></audio>
+        <!-- Remote Video Stream (Loudspeaker routed via Web Audio & webkit-playsinline) -->
+        <video id="remoteVideo" autoplay playsinline webkit-playsinline class="w-full h-full object-cover"></video>
 
         <!-- Fallback Audio Visualizer / Avatar (when remote video is off or voice-only call) -->
         <div id="remoteAudioFallback" class="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 to-slate-950 z-10 hidden">
@@ -500,7 +499,7 @@
 
       <!-- LOCAL VIDEO PIP OVERLAY (BOTTOM-RIGHT) -->
       <div id="localPipContainer" class="absolute bottom-28 right-4 z-20 w-28 h-40 sm:w-36 sm:h-48 rounded-2xl overflow-hidden glass-card shadow-2xl border-2 border-slate-700/80 cursor-pointer transition-all duration-300">
-        <video id="localVideo" autoplay playsinline muted class="w-full h-full object-cover mirror-video"></video>
+        <video id="localVideo" autoplay playsinline webkit-playsinline muted class="w-full h-full object-cover mirror-video"></video>
         
         <!-- Local Camera Off Overlay -->
         <div id="localCamOffOverlay" class="absolute inset-0 bg-slate-900 flex flex-col items-center justify-center text-slate-400 hidden">
@@ -516,7 +515,7 @@
 
       <!-- FIXED BOTTOM IN-CALL CONTROL PANEL -->
       <div class="relative z-20 pb-safe pb-6 px-4 flex justify-center">
-        <div class="glass-dock bg-slate-900/85 rounded-full px-5 py-3 flex items-center gap-3 sm:gap-4 shadow-2xl border border-slate-700/60">
+        <div class="glass-dock bg-slate-900/85 rounded-full px-4 sm:px-5 py-3 flex items-center gap-2.5 sm:gap-4 shadow-2xl border border-slate-700/60">
           
           <!-- Mic Toggle (Mute / Unmute) -->
           <button id="btnToggleMic" class="w-12 h-12 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-100 flex items-center justify-center border border-slate-700 active:scale-90 transition" title="Toggle Microphone">
@@ -528,13 +527,18 @@
             <i id="btnToggleCamIcon" class="fa-solid fa-video text-base"></i>
           </button>
 
+          <!-- Speaker Toggle (Loudspeaker / Earpiece) -->
+          <button id="btnToggleSpeaker" class="w-12 h-12 rounded-full bg-emerald-600/30 text-emerald-400 border border-emerald-500/50 flex items-center justify-center active:scale-90 transition" title="Toggle Speakerphone (Loudspeaker)">
+            <i id="btnToggleSpeakerIcon" class="fa-solid fa-volume-high text-base"></i>
+          </button>
+
           <!-- Flip Camera (Front / Back switch for mobile) -->
           <button id="btnInCallFlipCam" class="w-12 h-12 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-100 flex items-center justify-center border border-slate-700 active:scale-90 transition" title="Flip Camera">
             <i class="fa-solid fa-camera-rotate text-base"></i>
           </button>
 
           <!-- End Call Button (Red Hangup) -->
-          <button id="btnEndCall" class="w-14 h-14 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-xl shadow-rose-600/40 border-2 border-rose-400/40 active:scale-90 transition ml-2" title="End Call">
+          <button id="btnEndCall" class="w-14 h-14 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-xl shadow-rose-600/40 border-2 border-rose-400/40 active:scale-90 transition ml-1 sm:ml-2" title="End Call">
             <i class="fa-solid fa-phone-slash text-xl"></i>
           </button>
         </div>
@@ -864,6 +868,12 @@
         this.isCameraOff = false;
         this.isIdleCamActive = false;
         
+        // Speakerphone (Loudspeaker default) & Audio Routing
+        this.isSpeakerPhone = true;
+        this.remoteAudioSource = null;
+        this.remoteGainNode = null;
+        this.remoteCameraOff = false;
+        
         this.callDurationSeconds = 0;
         this.callDurationInterval = null;
         this.outgoingCallTimeout = null;
@@ -954,7 +964,6 @@
 
         // In-Call Elements
         this.remoteVideo = document.getElementById('remoteVideo');
-        this.remoteAudio = document.getElementById('remoteAudio');
         this.localVideo = document.getElementById('localVideo');
         this.remoteAudioFallback = document.getElementById('remoteAudioFallback');
         this.inCallRemoteIdAudio = document.getElementById('inCallRemoteIdAudio');
@@ -967,6 +976,8 @@
         this.btnToggleMicIcon = document.getElementById('btnToggleMicIcon');
         this.btnToggleCam = document.getElementById('btnToggleCam');
         this.btnToggleCamIcon = document.getElementById('btnToggleCamIcon');
+        this.btnToggleSpeaker = document.getElementById('btnToggleSpeaker');
+        this.btnToggleSpeakerIcon = document.getElementById('btnToggleSpeakerIcon');
         this.btnInCallFlipCam = document.getElementById('btnInCallFlipCam');
         this.btnEndCall = document.getElementById('btnEndCall');
 
@@ -1014,16 +1025,19 @@
       initSocket() {
         this.setPeerStatus('connecting', 'Connecting...');
 
-        // Dynamically connects to current host origin or configured URL
-        const SOCKET_SERVER_URL = window.ENV_SOCKET_URL || window.location.origin;
-
-        try {
-          this.socket = io(SOCKET_SERVER_URL, {
+        // Connect to Render backend URL (with localhost fallback for local development)
+        const socket = io(
+          window.ENV_SOCKET_URL || 
+          ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? window.location.origin : 'https://kurakani-app.onrender.com'),
+          {
             transports: ['websocket', 'polling'],
             reconnectionAttempts: 10,
             reconnectionDelay: 1000
-          });
+          }
+        );
+        this.socket = socket;
 
+        try {
           this.socket.on('connect', () => {
             console.log('[Socket] Connected to signaling server with socket ID:', this.socket.id);
             // Register persistent 15-digit Device ID
@@ -1073,11 +1087,8 @@
 
           // Mid-Call Track Toggle State
           this.socket.on('track-toggle', ({ video }) => {
-            if (video === false) {
-              this.remoteAudioFallback.classList.remove('hidden');
-            } else {
-              this.remoteAudioFallback.classList.add('hidden');
-            }
+            this.remoteCameraOff = (video === false);
+            this.updateRemoteVideoFallback();
           });
 
           // Signaling Error / Target Offline
@@ -1128,26 +1139,33 @@
           return await navigator.mediaDevices.getUserMedia({
             audio: audioConstraints,
             video: {
-              facingMode: this.currentFacingMode,
+              facingMode: { ideal: this.currentFacingMode },
               width: { ideal: 1280 },
               height: { ideal: 720 }
             }
           });
         } catch (err) {
-          console.warn('[Media] HD video request failed, trying basic video:', err);
+          console.warn('[Media] HD video request failed, trying flexible video:', err);
           try {
             return await navigator.mediaDevices.getUserMedia({
               audio: audioConstraints,
-              video: true
+              video: { facingMode: { ideal: this.currentFacingMode } }
             });
           } catch (err2) {
-            console.warn('[Media] Video completely unavailable, falling back to voice:', err2);
-            showToast('Camera in use or unavailable: joined with voice', 'warning');
-            this.callType = 'voice';
-            return await navigator.mediaDevices.getUserMedia({
-              audio: audioConstraints,
-              video: false
-            });
+            try {
+              return await navigator.mediaDevices.getUserMedia({
+                audio: audioConstraints,
+                video: true
+              });
+            } catch (err3) {
+              console.warn('[Media] Video completely unavailable, falling back to voice:', err3);
+              showToast('Camera in use or unavailable: joined with voice', 'warning');
+              this.callType = 'voice';
+              return await navigator.mediaDevices.getUserMedia({
+                audio: audioConstraints,
+                video: false
+              });
+            }
           }
         }
       }
@@ -1180,7 +1198,7 @@
 
         // Attach remote tracks when received (stream or track fallback)
         this.pc.ontrack = (event) => {
-          console.log('[WebRTC] Remote track received:', event.track.kind);
+          console.log('[WebRTC] Remote track received:', event.track.kind, event.track.id);
           if (event.streams && event.streams[0]) {
             this.remoteStream = event.streams[0];
           } else {
@@ -1190,14 +1208,29 @@
             this.remoteStream.addTrack(event.track);
           }
           this.remoteVideo.srcObject = this.remoteStream;
-          if (this.remoteAudio) this.remoteAudio.srcObject = this.remoteStream;
 
-          const hasVideo = this.remoteStream.getVideoTracks().length > 0 && this.remoteStream.getVideoTracks()[0].enabled;
-          if (!hasVideo || this.callType === 'voice') {
-            this.remoteAudioFallback.classList.remove('hidden');
-          } else {
-            this.remoteAudioFallback.classList.add('hidden');
+          if (event.track.kind === 'video') {
+            if (this.callType === 'video' && !this.remoteCameraOff) {
+              this.remoteAudioFallback.classList.add('hidden');
+            }
+            event.track.onmute = () => {
+              console.log('[WebRTC] Remote video track muted');
+            };
+            event.track.onunmute = () => {
+              console.log('[WebRTC] Remote video track unmuted');
+              if (this.callType === 'video' && !this.remoteCameraOff) {
+                this.remoteAudioFallback.classList.add('hidden');
+                this.remoteVideo.play().catch(e => console.warn('remoteVideo play warning:', e));
+              }
+            };
           }
+
+          if (event.track.kind === 'audio') {
+            this.setupAudioRouting();
+          }
+
+          this.updateRemoteVideoFallback();
+          this.remoteVideo.play().catch(e => console.warn('remoteVideo play error:', e));
         };
 
         // Monitor connection state
@@ -1211,6 +1244,31 @@
         };
 
         return this.pc;
+      }
+
+      updateRemoteVideoFallback() {
+        if (this.callType === 'voice') {
+          this.remoteAudioFallback.classList.remove('hidden');
+          return;
+        }
+
+        if (this.remoteCameraOff) {
+          this.remoteAudioFallback.classList.remove('hidden');
+          return;
+        }
+
+        const videoTracks = this.remoteStream ? this.remoteStream.getVideoTracks() : [];
+        const hasActiveVideo = videoTracks.length > 0 && videoTracks.some(t => t.enabled);
+
+        if (hasActiveVideo) {
+          this.remoteAudioFallback.classList.add('hidden');
+        } else {
+          if (this.callType === 'video') {
+            this.remoteAudioFallback.classList.add('hidden');
+          } else {
+            this.remoteAudioFallback.classList.remove('hidden');
+          }
+        }
       }
 
       async addRemoteCandidate(candidate) {
@@ -1493,12 +1551,7 @@
           // Initialize WebRTC Peer Connection
           const pc = this.createPeerConnection();
 
-          // Add local media tracks
-          this.localStream.getTracks().forEach(track => {
-            pc.addTrack(track, this.localStream);
-          });
-
-          // Set Remote Description (Caller's Offer)
+          // 1. Set Remote Description (Caller's Offer) FIRST for proper transceiver negotiation
           const remoteOfferDesc = new RTCSessionDescription({
             type: this.incomingOffer.type || 'offer',
             sdp: this.incomingOffer.sdp
@@ -1506,11 +1559,19 @@
           await pc.setRemoteDescription(remoteOfferDesc);
           await this.flushIceCandidateQueue();
 
-          // Create and set Local Description (Answer)
-          const answer = await pc.createAnswer();
+          // 2. Add local media tracks to established transceivers
+          this.localStream.getTracks().forEach(track => {
+            pc.addTrack(track, this.localStream);
+          });
+
+          // 3. Create and set Local Description (Answer) with matching media capabilities
+          const answer = await pc.createAnswer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: (this.callType === 'video')
+          });
           await pc.setLocalDescription(answer);
 
-          // Emit answer back to caller as plain serializable object
+          // 4. Emit answer back to caller as plain serializable object
           this.socket.emit('answer-call', {
             targetId: this.targetPeerId,
             responderId: this.my15DigitId,
@@ -1520,7 +1581,7 @@
             }
           });
 
-          // Transition to In-Call state
+          // 5. Transition to In-Call state
           this.handleCallConnected(this.targetPeerId);
 
         } catch (err) {
@@ -1572,24 +1633,124 @@
 
         this.transitionState(STATES.INCALL);
 
-        // Attach local stream to PiP preview
+        // Attach local stream to PiP preview & play
         this.localVideo.srcObject = this.localStream;
+        this.localVideo.play().catch(e => console.warn('localVideo play error:', e));
+
+        // Attach remote stream & play
+        if (this.remoteStream) {
+          this.remoteVideo.srcObject = this.remoteStream;
+          this.remoteVideo.play().catch(e => console.warn('remoteVideo play error:', e));
+        }
 
         // Remote ID formatting
         const formattedRemoteId = this.format15Digit(remoteId);
         this.inCallRemoteIdBadge.textContent = formattedRemoteId;
         this.inCallRemoteIdAudio.textContent = formattedRemoteId;
 
-        // Setup local camera placeholder if voice call
+        // Setup UI based on callType
         if (this.callType === 'voice') {
           this.localCamOffOverlay.classList.remove('hidden');
+          this.remoteAudioFallback.classList.remove('hidden');
           this.btnToggleCamIcon.className = 'fa-solid fa-video-slash text-rose-400';
         } else {
           this.localCamOffOverlay.classList.add('hidden');
+          this.remoteAudioFallback.classList.add('hidden');
           this.btnToggleCamIcon.className = 'fa-solid fa-video text-slate-100';
         }
 
+        // Route sound to loudspeaker by default
+        this.setupAudioRouting();
+
         this.startCallDurationTimer();
+      }
+
+      // ==========================================
+      // LOUDSPEAKER & AUDIO ROUTING
+      // Routes sound directly to device loudspeaker instead of earpiece receiver
+      // ==========================================
+      setupAudioRouting() {
+        if (!this.remoteStream) return;
+        const audioTracks = this.remoteStream.getAudioTracks();
+        if (audioTracks.length === 0) return;
+
+        soundSynth.initCtx();
+
+        try {
+          // Attempt output device selection (setSinkId) if supported
+          if ('setSinkId' in HTMLMediaElement.prototype && navigator.mediaDevices?.enumerateDevices) {
+            navigator.mediaDevices.enumerateDevices().then(devices => {
+              const audioOutputs = devices.filter(d => d.kind === 'audiooutput');
+              const speaker = audioOutputs.find(d => 
+                d.label.toLowerCase().includes('speaker') || 
+                d.label.toLowerCase().includes('loudspeaker') ||
+                d.deviceId === 'speaker'
+              );
+              if (speaker && this.remoteVideo.setSinkId) {
+                this.remoteVideo.setSinkId(speaker.deviceId).catch(() => {});
+              }
+            }).catch(() => {});
+          }
+
+          // Web Audio API Routing: destination forces system loudspeaker on mobile devices
+          if (soundSynth.ctx) {
+            if (!this.remoteAudioSource) {
+              const audioStream = new MediaStream(audioTracks);
+              this.remoteAudioSource = soundSynth.ctx.createMediaStreamSource(audioStream);
+              this.remoteGainNode = soundSynth.ctx.createGain();
+              this.remoteGainNode.gain.value = this.isSpeakerPhone ? 1.0 : 0.2;
+              this.remoteAudioSource.connect(this.remoteGainNode);
+              this.remoteGainNode.connect(soundSynth.ctx.destination);
+            } else if (this.remoteGainNode) {
+              this.remoteGainNode.gain.value = this.isSpeakerPhone ? 1.0 : 0.2;
+            }
+            // Mute video element to avoid duplicate audio/echo while Web Audio plays loud
+            this.remoteVideo.muted = true;
+          } else {
+            this.remoteVideo.muted = false;
+          }
+        } catch (err) {
+          console.warn('[Audio] Loudspeaker routing fallback:', err);
+          this.remoteVideo.muted = false;
+        }
+
+        this.updateSpeakerButtonUI();
+      }
+
+      toggleSpeaker() {
+        soundSynth.initCtx();
+        this.isSpeakerPhone = !this.isSpeakerPhone;
+
+        if (this.remoteGainNode && soundSynth.ctx) {
+          if (this.isSpeakerPhone) {
+            this.remoteGainNode.gain.setValueAtTime(1.0, soundSynth.ctx.currentTime);
+            this.remoteVideo.muted = true;
+            showToast('Loudspeaker Active', 'info');
+          } else {
+            this.remoteGainNode.gain.setValueAtTime(0.0001, soundSynth.ctx.currentTime);
+            this.remoteVideo.muted = false;
+            showToast('Earpiece Receiver Active', 'info');
+          }
+        } else {
+          this.remoteVideo.muted = !this.remoteVideo.muted;
+          showToast(this.isSpeakerPhone ? 'Loudspeaker Active' : 'Earpiece Receiver Active', 'info');
+        }
+
+        this.updateSpeakerButtonUI();
+      }
+
+      updateSpeakerButtonUI() {
+        if (!this.btnToggleSpeaker || !this.btnToggleSpeakerIcon) return;
+
+        if (this.isSpeakerPhone) {
+          this.btnToggleSpeaker.className = 'w-12 h-12 rounded-full bg-emerald-600/30 text-emerald-400 border border-emerald-500/50 flex items-center justify-center active:scale-90 transition';
+          this.btnToggleSpeakerIcon.className = 'fa-solid fa-volume-high text-base';
+          this.btnToggleSpeaker.title = 'Speaker: Loudspeaker (Tap for Earpiece)';
+        } else {
+          this.btnToggleSpeaker.className = 'w-12 h-12 rounded-full bg-slate-800 text-slate-300 border border-slate-700 flex items-center justify-center active:scale-90 transition';
+          this.btnToggleSpeakerIcon.className = 'fa-solid fa-phone-volume text-base';
+          this.btnToggleSpeaker.title = 'Speaker: Earpiece (Tap for Loudspeaker)';
+        }
       }
 
       startCallDurationTimer() {
@@ -1650,16 +1811,23 @@
         if (videoTracks.length === 0) {
           try {
             const camStream = await navigator.mediaDevices.getUserMedia({
-              video: { facingMode: this.currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
+              video: { facingMode: { ideal: this.currentFacingMode }, width: { ideal: 1280 }, height: { ideal: 720 } }
             });
             const newTrack = camStream.getVideoTracks()[0];
             this.localStream.addTrack(newTrack);
 
             if (this.pc) {
-              this.pc.addTrack(newTrack, this.localStream);
+              const senders = this.pc.getSenders();
+              const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+              if (videoSender) {
+                await videoSender.replaceTrack(newTrack);
+              } else {
+                this.pc.addTrack(newTrack, this.localStream);
+              }
             }
 
             this.localVideo.srcObject = this.localStream;
+            this.localVideo.play().catch(() => {});
             this.isCameraOff = false;
             this.localCamOffOverlay.classList.add('hidden');
             this.btnToggleCam.className = 'w-12 h-12 rounded-full bg-slate-800 text-slate-100 border border-slate-700 flex items-center justify-center active:scale-90 transition';
@@ -1711,6 +1879,9 @@
 
         this.remoteVideo.srcObject = localSrc;
         this.localVideo.srcObject = remoteSrc;
+
+        this.remoteVideo.play().catch(() => {});
+        this.localVideo.play().catch(() => {});
       }
 
       // ==========================================
@@ -1729,6 +1900,20 @@
           clearInterval(this.callDurationInterval);
           this.callDurationInterval = null;
         }
+
+        // Clean up Web Audio routing nodes
+        if (this.remoteAudioSource) {
+          try { this.remoteAudioSource.disconnect(); } catch (e) {}
+          this.remoteAudioSource = null;
+        }
+        if (this.remoteGainNode) {
+          try { this.remoteGainNode.disconnect(); } catch (e) {}
+          this.remoteGainNode = null;
+        }
+
+        // Reset speaker state and camera off tracking
+        this.isSpeakerPhone = true;
+        this.remoteCameraOff = false;
 
         // Notify remote peer
         if (this.targetPeerId && this.socket && reason !== 'remote_ended') {
@@ -1752,7 +1937,6 @@
         }
 
         this.remoteVideo.srcObject = null;
-        if (this.remoteAudio) this.remoteAudio.srcObject = null;
         this.localVideo.srcObject = null;
 
         this.targetPeerId = null;
@@ -1958,6 +2142,7 @@
         // In-Call Controls
         this.btnToggleMic.addEventListener('click', () => this.toggleMic());
         this.btnToggleCam.addEventListener('click', () => this.toggleCam());
+        this.btnToggleSpeaker.addEventListener('click', () => this.toggleSpeaker());
         this.btnInCallFlipCam.addEventListener('click', () => this.flipCamera());
         this.btnEndCall.addEventListener('click', () => this.terminateCall('ended'));
         this.localPipContainer.addEventListener('click', () => this.swapPipVideo());
